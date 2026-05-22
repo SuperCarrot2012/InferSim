@@ -15,6 +15,9 @@ sys.path.append(os.path.abspath(parent_dir))
 from hardware.gpu import gpu_map  # noqa: E402
 
 DEFAULT_M_SIZES = [
+    1,
+    2,
+    4,
     8,
     16,
     32,
@@ -32,6 +35,9 @@ DEFAULT_M_SIZES = [
 
 # Edit these lists for your target model / layer shapes.
 DEFAULT_K_SIZES = [
+    128,
+    256,
+    512,
     1024,
     2048,
     4096,
@@ -39,7 +45,17 @@ DEFAULT_K_SIZES = [
     14336,
 ]
 
-DEFAULT_N_SIZES = [1024, 2048, 4096, 8192, 14336, 128 * 1024]
+DEFAULT_N_SIZES = [
+    128,
+    256,
+    512,
+    1024,
+    2048,
+    4096,
+    8192,
+    14336,
+    128 * 1024,
+]
 
 DTYPE_MAP = {
     "bf16": torch.bfloat16,
@@ -100,7 +116,7 @@ def test_gemm(
     dtype_name = str(dtype).split(".")[-1]
     print(
         f" > Perf (m={m:6}, k={k:5}, n={n:5}, {dtype_name}): "
-        f"{latency_us:8.1f} us | {tflops:6.1f} TFLOPS | {gbps:6.1f} GB/s"
+        f"{latency_us:8.3f} us | {tflops:6.3f} TFLOPS | {gbps:6.3f} GB/s"
     )
     return latency_us, tflops, gbps
 
@@ -132,7 +148,7 @@ def main(args) -> None:
     k_sizes = parse_sizes(args.k_sizes, DEFAULT_K_SIZES)
     n_sizes = parse_sizes(args.n_sizes, DEFAULT_N_SIZES)
 
-    print("normal_gemm benchmark (torch.nn.Linear)")
+    print("torch_gemm benchmark (torch.nn.Linear)")
     print(f" > device: {torch.cuda.get_device_name()}")
     print(f" > dtype: {args.dtype}, peak TFLOPS (for MFU): {peak}")
     print(f" > m sizes ({len(m_sizes)}): {m_sizes}")
@@ -154,7 +170,7 @@ def main(args) -> None:
                         "k": k,
                         "n": n,
                         "latency_us": round(latency_us, 3),
-                        "mfu": round(tflops / peak, 3),
+                        "mfu": round(tflops / peak, 6),
                         "tflops": round(tflops, 3),
                         "gbps": round(gbps, 3),
                     }

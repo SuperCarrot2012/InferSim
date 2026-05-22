@@ -166,9 +166,6 @@ class Model:
 
     def prefill(self):
         print("{s:{c}^{n}}".format(s="Prefilling", n=50, c="-"))
-        # print(
-        #     "{:<40} {:<10}".format("Max prefill tokens:", self.args.max_prefill_tokens)
-        # )
         attn = create_attention(
             self.config, self.args.use_fp8_gemm, self.args.use_fp8_kv, self.args.tp_size
         )
@@ -207,6 +204,7 @@ class Model:
         if self.args.tp_size > 1:
             print("{:<40} {:<10.2f}".format("TP all_reduce (us):", tp_comm_time * 1e6))
 
+        # LM head shape: [bs, seq_len, hidden_size] @ [hidden_size, vocab_size]
         lm_head_latency, lm_head_mfu = get_gemm_mfu_and_latency(
             m=self.target_bs * self.args.target_isl,
             k=self.config.hidden_size,
@@ -221,14 +219,20 @@ class Model:
             device_type=self.args.device_type,
             use_fp8_gemm=self.args.use_fp8_gemm,
         )
-        lm_head_time = max(lm_head_latency, lm_head_memory_latency)
-        print("{:<40} {:<10.2f}".format("LM head MFU:", lm_head_mfu))
-        print("{:<40} {:<10.2f}".format("LM head latency (us):", lm_head_time * 1e6))
+        print(
+            "{:<40} {:<60}".format(
+                "LM head shape:",
+                f"[{self.target_bs},{self.args.target_isl},{self.config.hidden_size}]@[{self.config.hidden_size},{self.config.vocab_size}]",
+            )
+        )
+        print("{:<40} {:<10.6f}".format("LM head MFU:", lm_head_mfu))
+        print("{:<40} {:<10.6f}".format("LM head latency (us):", lm_head_latency * 1e6))
         print(
             "{:<40} {:<10.2f}".format(
                 "LM head memory latency (us):", lm_head_memory_latency * 1e6
             )
         )
+        lm_head_time = max(lm_head_latency, lm_head_memory_latency)
 
         num_tokens = self.target_bs * self.args.target_isl
         if self.args.enable_tbo:
@@ -264,13 +268,14 @@ class Model:
         attn = create_attention(
             self.config, self.args.use_fp8_gemm, self.args.use_fp8_kv, self.args.tp_size
         )
+        attn_qkvo_proj_time = attn.decode_attn_qkvo_proj(
+            self.target_bs, self.args.device_type
+        )
         attn_core_time = attn.decode_attn_core(
             self.target_bs,
             self.avg_context_len,
-            self.kvcache_bytes,
             self.args.device_type,
         )
-        attn_other_time = attn.decode_attn_others(self.target_bs, self.args.device_type)
 
         moe = MoE(self.config, self.args.use_fp8_gemm, self.args.tp_size)
         moe_time = moe.decode_moe(
@@ -293,20 +298,50 @@ class Model:
         if self.args.tp_size > 1:
             print("{:<40} {:<10.2f}".format("TP all_reduce (us):", tp_comm_time * 1e6))
 
+        # LM head shape: [bs, seq_len, hidden_size] @ [hidden_size, vocab_size]
+        lm_head_latency, lm_head_mfu = get_gemm_mfu_and_latency(
+            m=self.target_bs * 1,
+            k=self.config.hidden_size,
+            n=self.config.vocab_size,
+            device_type=self.args.device_type,
+            use_fp8_gemm=self.args.use_fp8_gemm,
+        )
+        lm_head_memory_latency = get_gemm_memory_latency(
+            m=self.target_bs * 1,
+            k=self.config.hidden_size,
+            n=self.config.vocab_size,
+            device_type=self.args.device_type,
+            use_fp8_gemm=self.args.use_fp8_gemm,
+        )
+        print(
+            "{:<40} {:<60}".format(
+                "LM head shape:",
+                f"[{self.target_bs},{1},{self.config.hidden_size}]@[{self.config.hidden_size},{self.config.vocab_size}]",
+            )
+        )
+        print("{:<40} {:<10.6f}".format("LM head MFU:", lm_head_mfu))
+        print("{:<40} {:<10.2f}".format("LM head latency (us):", lm_head_latency * 1e6))
+        print(
+            "{:<40} {:<10.2f}".format(
+                "LM head memory latency (us):", lm_head_memory_latency * 1e6
+            )
+        )
+        lm_head_time = max(lm_head_latency, lm_head_memory_latency)
+
         num_tokens = self.target_bs
         if self.args.enable_tbo:
             num_tokens *= 2
             tpot = max(
-                attn_core_time + attn_other_time, moe_time + comm_time1 + comm_time2
+                attn_qkvo_proj_time + attn_core_time, moe_time + comm_time1 + comm_time2
             )
             tpot *= 2
         else:
-            tpot = attn_core_time
-            tpot += attn_other_time
+            tpot = attn_qkvo_proj_time + attn_core_time
             tpot += moe_time
             tpot += comm_time1 + comm_time2
             tpot += tp_comm_time  # Add TP communication time
         tpot *= self.config.num_hidden_layers
+        tpot += lm_head_time
         tpot *= 1000  # convert to ms
         tpot += 5  # for scheduler
 
@@ -317,5 +352,5 @@ class Model:
                 num_tokens / self.args.tp_size / (tpot / 1000),
             )
         )
-        if tpot > self.args.target_tpot:
-            print("!Error: TPOT > SLO, need smaller GFLOPs to speedup")
+        # if tpot > self.args.target_tpot:
+        #     print("!Error: TPOT > SLO, need smaller GFLOPs to speedup")

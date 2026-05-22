@@ -12,7 +12,7 @@ def get_gemm_mfu_and_latency(m, k, n, device_type, use_fp8_gemm):
     latency = gflops / (gpu.fp16_tflops * 1024 * mfu)
     if use_fp8_gemm:
         latency = gflops / (gpu.fp8_tflops * 1024 * mfu)
-    print(f"Debug: gemm m:{m} k:{k} n:{n} latency:{latency} mfu:{mfu}")
+    # print(f"Debug: gemm m:{m} k:{k} n:{n} latency:{latency} mfu:{mfu}")
     return latency, mfu
 
 
@@ -217,13 +217,14 @@ def get_gemm_mfu(device_type, m, k, n):
         m_ = int(row[0])
         k_ = int(row[1])
         n_ = int(row[2])
-        if k_ == mfu_k and n_ == mfu_n and m_ <= m:
+        if k_ == mfu_k and n_ == mfu_n and m_ >= m:
             mfu = float(row[4])
+            break
 
     # Benchmark mfu is usually slightly higher than the actual performance, so we multiply by 0.9 to get a more realistic result.
-    mfu *= 0.9
+    mfu *= 0.90
 
-    return round(mfu, 3)
+    return round(mfu, 6)
 
 
 def get_linear_attn_prefill_latency(config, seq_len, device_type):
