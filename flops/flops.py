@@ -9,30 +9,22 @@ def get_mha_gflops(config, bs, avg_context_len, tp_size):
     # TP shards heads; hidden_size is NOT sharded
     tp_num_heads = config.num_attention_heads // tp_size
     tp_num_kv_heads = config.num_key_value_heads // tp_size
-    q_proj = gemm_flops(
-        bs, config.hidden_size, tp_num_heads * config.head_dim
-    )
-    k_proj = gemm_flops(
-        bs, config.hidden_size, tp_num_kv_heads * config.head_dim
-    )
-    v_proj = gemm_flops(
-        bs, config.hidden_size, tp_num_kv_heads * config.head_dim
-    )
-    o_proj = gemm_flops(
-        bs, tp_num_heads * config.head_dim, config.hidden_size
-    )
-    attn_core = gemm_flops(
-        bs, tp_num_heads * config.head_dim, avg_context_len
-    ) + gemm_flops(bs, avg_context_len, tp_num_heads * config.head_dim)
+    q_proj = gemm_flops(bs, tp_num_heads * config.head_dim, config.hidden_size)
+    k_proj = gemm_flops(bs, tp_num_kv_heads * config.head_dim, config.hidden_size)
+    v_proj = gemm_flops(bs, tp_num_kv_heads * config.head_dim, config.hidden_size)
+    o_proj = gemm_flops(bs, config.hidden_size, tp_num_heads * config.head_dim)
+    # Calculate decode stage attention core flops. So seq_len_q is 1.
+    # And seq_len_k is avg_context_len.
+    k_qt = gemm_flops(1, avg_context_len, config.head_dim) * bs * tp_num_heads
+    pv = gemm_flops(1, config.head_dim, avg_context_len) * bs * tp_num_heads
+    attn_core = k_qt + pv
     return attn_core / 1e9, (q_proj + k_proj + v_proj + o_proj) / 1e9
 
 
 def get_mla_absorb_gflops(config, bs, avg_context_len, tp_size):
     tp_num_heads = config.num_attention_heads // tp_size
     q_down_proj = gemm_flops(bs, config.hidden_size, config.q_lora_rank)
-    q_up_proj = gemm_flops(
-        bs, config.q_lora_rank, tp_num_heads * config.qk_head_dim
-    )
+    q_up_proj = gemm_flops(bs, config.q_lora_rank, tp_num_heads * config.qk_head_dim)
 
     kv_down_proj = gemm_flops(
         bs, config.hidden_size, config.kv_lora_rank + config.qk_rope_head_dim
@@ -41,21 +33,15 @@ def get_mla_absorb_gflops(config, bs, avg_context_len, tp_size):
     bmm_q_wk = tp_num_heads * gemm_flops(
         bs, config.qk_nope_head_dim, config.kv_lora_rank
     )
-    bmm_o_wv = tp_num_heads * gemm_flops(
-        bs, config.kv_lora_rank, config.v_head_dim
-    )
+    bmm_o_wv = tp_num_heads * gemm_flops(bs, config.kv_lora_rank, config.v_head_dim)
 
-    o_proj = gemm_flops(
-        bs, tp_num_heads * config.v_head_dim, config.hidden_size
-    )
+    o_proj = gemm_flops(bs, tp_num_heads * config.v_head_dim, config.hidden_size)
 
     attn_core = gemm_flops(
         bs,
         tp_num_heads * (config.kv_lora_rank + config.qk_rope_head_dim),
         avg_context_len,
-    ) + gemm_flops(
-        bs, avg_context_len, tp_num_heads * config.kv_lora_rank
-    )
+    ) + gemm_flops(bs, avg_context_len, tp_num_heads * config.kv_lora_rank)
 
     return (
         attn_core / 1e9,
@@ -108,9 +94,7 @@ def get_gqla_absorb_gflops(config, bs, avg_context_len):
 def get_mla_noabsorb_gflops(config, bs, avg_context_len, tp_size):
     tp_num_heads = config.num_attention_heads // tp_size
     q_down_proj = gemm_flops(bs, config.hidden_size, config.q_lora_rank)
-    q_up_proj = gemm_flops(
-        bs, config.q_lora_rank, tp_num_heads * config.qk_head_dim
-    )
+    q_up_proj = gemm_flops(bs, config.q_lora_rank, tp_num_heads * config.qk_head_dim)
 
     kv_down_proj = gemm_flops(
         bs, config.hidden_size, config.kv_lora_rank + config.qk_rope_head_dim
@@ -121,9 +105,7 @@ def get_mla_noabsorb_gflops(config, bs, avg_context_len, tp_size):
         tp_num_heads * (config.v_head_dim + config.qk_nope_head_dim),
     )
 
-    o_proj = gemm_flops(
-        bs, tp_num_heads * config.v_head_dim, config.hidden_size
-    )
+    o_proj = gemm_flops(bs, tp_num_heads * config.v_head_dim, config.hidden_size)
 
     attn_core = gemm_flops(
         bs,
@@ -138,19 +120,23 @@ def get_mla_noabsorb_gflops(config, bs, avg_context_len, tp_size):
 
 
 def get_attn_gflops(
-    config: ModelConfig, avg_context_len: int, tp_size: int, absorb=True
+    config: ModelConfig,
+    bs: int,
+    avg_context_len: int,
+    tp_size: int,
+    absorb=True,
 ):
     if config.attn_type == "MHA/GQA":
         return get_mha_gflops(
-            config, bs=1, avg_context_len=avg_context_len, tp_size=tp_size
+            config, bs=bs, avg_context_len=avg_context_len, tp_size=tp_size
         )
     elif config.attn_type == "MLA":
         if absorb:
             return get_mla_absorb_gflops(
-                config, bs=1, avg_context_len=avg_context_len, tp_size=tp_size
+                config, bs=bs, avg_context_len=avg_context_len, tp_size=tp_size
             )
         return get_mla_noabsorb_gflops(
-            config, bs=1, avg_context_len=avg_context_len, tp_size=tp_size
+            config, bs=bs, avg_context_len=avg_context_len, tp_size=tp_size
         )
 
 
@@ -159,3 +145,9 @@ def get_moe_gflops(config: ModelConfig, tp_size: int):
     tp_intermediate_size = config.intermediate_size // tp_size
     act = config.num_shared_experts + config.num_experts_per_tok
     return act * 3.0 * gemm_flops(1, config.hidden_size, tp_intermediate_size) / 1e9
+
+
+def get_lm_head_gflops(config: ModelConfig, tp_size: int):
+    """Per-token logits GEMM: [1, H] @ [H, V/tp] (vocab parallel along tp_size)."""
+    vocab_per_gpu = config.vocab_size // tp_size
+    return gemm_flops(1, vocab_per_gpu, config.hidden_size) / 1e9

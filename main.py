@@ -44,7 +44,7 @@ if __name__ == "__main__":
         "--device-type",
         type=str,
         default="H20",
-        choices=["H20", "H800", "H200", "GB200"],
+        choices=["H20", "H800", "H200", "GB200", "A100"],
         help="Device type",
     )
     parser.add_argument("--world-size", type=int, default=1, help="Num of GPUs")
@@ -55,23 +55,29 @@ if __name__ == "__main__":
         help="Tensor parallel size. If >1, both attention and MoE use TP; if =1, attention uses DP and MoE uses EP.",
     )
     parser.add_argument("--num-nodes", type=int, default=1, help="Num of nodes")
+    # parser.add_argument(
+    #     "--max-prefill-tokens",
+    #     type=int,
+    #     default=4096,
+    #     help="Max prefill tokens per GPU",
+    # )
     parser.add_argument(
-        "--max-prefill-tokens",
+        "--batch-size",
         type=int,
-        default=4096,
-        help="Max prefill tokens per GPU",
+        default=1,
+        help="Batch size per GPU.",
     )
+    # parser.add_argument(
+    #     "--decode-bs",
+    #     type=int,
+    #     help="Decoding batchsize per GPU. If not specified, bs = tgs * tpot.",
+    # )
+    # parser.add_argument(
+    #     "--target-tgs", type=float, default=2560, help="Target tokens/s per GPU"
+    # )
+    # parser.add_argument("--target-tpot", type=float, default=50, help="TPOT in ms")
     parser.add_argument(
-        "--decode-bs",
-        type=int,
-        help="Decoding batchsize per GPU. If not specified, bs = tgs * tpot.",
-    )
-    parser.add_argument(
-        "--target-tgs", type=float, default=2560, help="Target tokens/s per GPU"
-    )
-    parser.add_argument("--target-tpot", type=float, default=50, help="TPOT in ms")
-    parser.add_argument(
-        "--target-isl", type=int, default=4096, help="Input sequence length, in tokens"
+        "--target-isl", type=int, default=2048, help="Input sequence length, in tokens"
     )
     parser.add_argument(
         "--target-osl", type=int, default=2048, help="Output sequence length, in tokens"

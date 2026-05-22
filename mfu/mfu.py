@@ -2,6 +2,28 @@ import csv
 import os
 
 from hardware.gpu import gpu_map
+from flops.flops import gemm_flops
+
+
+def get_gemm_mfu_and_latency(m, k, n, device_type, use_fp8_gemm):
+    gpu = gpu_map[device_type]
+    gflops = gemm_flops(m, k, n) / 1e9
+    mfu = get_gemm_mfu(device_type, m, k, n)
+    latency = gflops / (gpu.fp16_tflops * 1024 * mfu)
+    if use_fp8_gemm:
+        latency = gflops / (gpu.fp8_tflops * 1024 * mfu)
+    print(f"Debug: gemm m:{m} k:{k} n:{n} latency:{latency} mfu:{mfu}")
+    return latency, mfu
+
+
+def get_gemm_memory_latency(m, k, n, device_type, use_fp8_gemm):
+    gpu = gpu_map[device_type]
+    bytes_per_element = 1 if use_fp8_gemm else 2
+    m_a = m * k * bytes_per_element
+    m_b = k * n * bytes_per_element
+    m_c = m * n * bytes_per_element
+    latency = (m_a + m_b + m_c) / (1024 * 1024 * 1024) / gpu.mem_bw
+    return latency
 
 
 def get_attn_decode_mfu(config, target_bs, kv_len, device_type, use_fp8_kv, tp_size):
@@ -13,7 +35,9 @@ def get_attn_decode_mfu(config, target_bs, kv_len, device_type, use_fp8_kv, tp_s
         file_name = f"bench_data/mha/decode/{device_type.lower()}/{tp_num_heads}-{tp_num_kv_heads}-{head_dim}.csv"
     elif config.attn_type == "MLA":
         head_dim = f"{config.kv_lora_rank}-{config.qk_rope_head_dim}"
-        file_name = f"bench_data/mla/decode/{device_type.lower()}/{tp_num_heads}-{head_dim}.csv"
+        file_name = (
+            f"bench_data/mla/decode/{device_type.lower()}/{tp_num_heads}-{head_dim}.csv"
+        )
     if not os.path.exists(file_name):
         print(f"Warning: {file_name} not exists")
         return gpu.mfu
@@ -30,7 +54,9 @@ def get_attn_decode_mfu(config, target_bs, kv_len, device_type, use_fp8_kv, tp_s
             rows.append(row)
 
     # Find the row with closest batch_size and kv_len to target values
-    closest_row = min(rows, key=lambda r: abs(int(r[2]) - target_bs) + abs(int(r[3]) - kv_len))
+    closest_row = min(
+        rows, key=lambda r: abs(int(r[2]) - target_bs) + abs(int(r[3]) - kv_len)
+    )
     mfu = float(closest_row[5])
 
     return round(mfu, 3)
@@ -71,7 +97,9 @@ def get_attn_prefill_mfu(config, seq_len, device_type, tp_size):
     return round(mfu, 3)
 
 
-def get_groupedgemm_decode_mfu(config, target_bs, device_type, num_gpus, use_fp8, tp_size=1):
+def get_groupedgemm_decode_mfu(
+    config, target_bs, device_type, num_gpus, use_fp8, tp_size=1
+):
     gpu = gpu_map[device_type]
     file_name = f"bench_data/grouped_gemm/decode/{device_type.lower()}/data.csv"
     if not os.path.exists(file_name):
@@ -110,7 +138,10 @@ def get_groupedgemm_decode_mfu(config, target_bs, device_type, num_gpus, use_fp8
 
     return round(mfu1, 3), round(mfu2, 3)
 
-def get_groupedgemm_prefill_mfu(config, seq_len, device_type, num_gpus, use_fp8, tp_size=1):
+
+def get_groupedgemm_prefill_mfu(
+    config, seq_len, device_type, num_gpus, use_fp8, tp_size=1
+):
     gpu = gpu_map[device_type]
     file_name = f"bench_data/grouped_gemm/prefill/{device_type.lower()}/data.csv"
     if not os.path.exists(file_name):
@@ -188,6 +219,9 @@ def get_gemm_mfu(device_type, m, k, n):
         n_ = int(row[2])
         if k_ == mfu_k and n_ == mfu_n and m_ <= m:
             mfu = float(row[4])
+
+    # Benchmark mfu is usually slightly higher than the actual performance, so we multiply by 0.9 to get a more realistic result.
+    mfu *= 0.9
 
     return round(mfu, 3)
 

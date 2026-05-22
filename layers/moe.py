@@ -1,8 +1,12 @@
 from flops.flops import gemm_flops
 from hardware.gpu import gpu_map
 from layers.attn import get_gemm_mfu_and_latency
-from mfu.mfu import (get_gemm_mfu, get_groupedgemm_decode_mfu,
-                     get_groupedgemm_prefill_mfu)
+from mfu.mfu import (
+    get_gemm_mfu,
+    get_gemm_memory_latency,
+    get_groupedgemm_decode_mfu,
+    get_groupedgemm_prefill_mfu,
+)
 from params.params import load_moe_weights_time
 
 
@@ -29,7 +33,12 @@ class MoE:
         if self.config.is_moe:
             routed_experts_mfu = max(
                 get_groupedgemm_decode_mfu(
-                    self.config, bs, device_type, num_gpus, self.use_fp8_gemm, self.tp_size
+                    self.config,
+                    bs,
+                    device_type,
+                    num_gpus,
+                    self.use_fp8_gemm,
+                    self.tp_size,
                 )
             )
         else:  # Dense FFN is treated as a special 1-expert MoE
@@ -90,28 +99,33 @@ class MoE:
             t += shared_expert_up_proj + shared_expert_down_proj
         return t
 
-    def prefill_moe(self, seq_len, device_type, num_gpus):
+    def prefill_moe(self, bs, seq_len, device_type, num_gpus):
         gpu = gpu_map[device_type]
 
         # TP shards intermediate_size; hidden_size is NOT sharded
         tp_intermediate_size = self.config.intermediate_size // self.tp_size
         routed_experts_gflops = gemm_flops(
-            1, self.config.hidden_size, tp_intermediate_size
+            bs * seq_len, self.config.hidden_size, tp_intermediate_size
         )
-        routed_experts_gflops *= seq_len * self.config.num_experts_per_tok * 3.0 / 1e9
+        routed_experts_gflops *= self.config.num_experts_per_tok * 3.0 / 1e9
 
         if self.config.is_moe:
             routed_experts_mfu = max(
                 get_groupedgemm_prefill_mfu(
-                    self.config, seq_len, device_type, num_gpus, self.use_fp8_gemm, self.tp_size
+                    self.config,
+                    seq_len,
+                    device_type,
+                    num_gpus,
+                    self.use_fp8_gemm,
+                    self.tp_size,
                 )
             )
         else:  # Dense FFN is treated as a special 1-expert MoE
             routed_experts_mfu = get_gemm_mfu(
                 device_type,
-                seq_len,
+                bs * seq_len,
                 self.config.hidden_size,
-                self.config.intermediate_size * 2 // num_gpus,
+                tp_intermediate_size,
             )
 
         routed_experts_latency = routed_experts_gflops / (
@@ -122,9 +136,25 @@ class MoE:
                 gpu.fp8_tflops * 1024 * routed_experts_mfu
             )
 
-        moe_load_time = load_moe_weights_time(
-            self.config, self.use_fp8_gemm, gpu, num_gpus, self.tp_size
+        up_proj_memory_latency = get_gemm_memory_latency(
+            m=bs * seq_len,
+            k=self.config.hidden_size,
+            n=tp_intermediate_size,
+            device_type=device_type,
+            use_fp8_gemm=self.use_fp8_gemm,
         )
+        gate_proj_memory_latency = up_proj_memory_latency
+        down_proj_memory_latency = get_gemm_memory_latency(
+            m=bs * seq_len,
+            k=tp_intermediate_size,
+            n=self.config.hidden_size,
+            device_type=device_type,
+            use_fp8_gemm=self.use_fp8_gemm,
+        )
+        moe_memory_latency = (
+            up_proj_memory_latency + gate_proj_memory_latency + down_proj_memory_latency
+        )
+
         print("{:<40} {:<10.2f}".format("Routed experts MFU:", routed_experts_mfu))
         print(
             "{:<40} {:<10.2f}".format(
@@ -133,10 +163,10 @@ class MoE:
         )
         print(
             "{:<40} {:<10.2f}".format(
-                "Experts loading latency (us):", moe_load_time * 1e6
+                "Experts memory latency (us):", moe_memory_latency * 1e6
             )
         )
-        t = max(routed_experts_latency, moe_load_time)
+        t = max(routed_experts_latency, moe_memory_latency)
 
         if self.config.num_shared_experts > 0:
             # TP shards intermediate_size; hidden_size is NOT sharded

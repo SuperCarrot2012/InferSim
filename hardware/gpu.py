@@ -61,4 +61,17 @@ gb200 = GPU(
     rdma_bw=50 * 0.8,
 )  # GB200 NVL72
 
-gpu_map = {"H20": h20, "H800": h800, "H200": h200, "GB200": gb200}
+a100 = GPU(
+    fp16_tflops=312,
+    fp8_tflops=312,  # A100 not support fp8 tensor core operations
+    mfu=0.4,
+    mem=40,
+    mem_bw=1555 * 0.8,
+    nvlink_bw=600 * 0.8 / 2,
+    rdma_bw=50 * 0.8,
+    frequency=1410 * 0.9,
+    num_sm=108,
+    sm_version=80,
+)
+
+gpu_map = {"H20": h20, "H800": h800, "H200": h200, "GB200": gb200, "A100": a100}

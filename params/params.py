@@ -2,6 +2,29 @@ from config.model_config import ModelConfig
 from hardware.gpu import GPU
 
 
+def get_embed_lm_head_params_size(
+    config: ModelConfig, use_fp8: bool, tp_size: int
+) -> tuple[int, int, int]:
+    """Return (embed_bytes, lm_head_bytes, total_bytes) on this GPU.
+
+    Assumes vocab-parallel sharding along tp_size (vocab_size divisible by tp_size).
+    If tie_word_embeddings, embed and lm_head share one matrix (counted once).
+    """
+    if config.vocab_size <= 0:
+        return 0, 0, 0
+
+    vocab_per_gpu = config.vocab_size // tp_size
+    w = vocab_per_gpu * config.hidden_size
+    if use_fp8:
+        embed_bytes = w
+    else:
+        embed_bytes = 2 * w
+    if config.tie_word_embeddings:
+        return embed_bytes, 0, embed_bytes
+    lm_head_bytes = embed_bytes
+    return embed_bytes, lm_head_bytes, embed_bytes + lm_head_bytes
+
+
 def get_mha_params_size(config: ModelConfig, use_fp8: bool, tp_size: int):
     # TP shards heads; hidden_size is NOT sharded (row/col-parallel + allreduce)
     tp_num_heads = config.num_attention_heads // tp_size

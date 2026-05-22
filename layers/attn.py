@@ -1,17 +1,11 @@
-from flops.flops import gemm_flops
+from flops.flops import gemm_flops, get_attn_gflops
 from hardware.gpu import gpu_map
-from mfu.mfu import get_attn_decode_mfu, get_attn_prefill_mfu, get_gemm_mfu
-
-
-def get_gemm_mfu_and_latency(m, k, n, device_type, use_fp8_gemm):
-    gpu = gpu_map[device_type]
-    gflops = gemm_flops(m, k, n) / 1e9
-    mfu = get_gemm_mfu(device_type, m, k, n)
-    latency = gflops / (gpu.fp16_tflops * 1024 * mfu)
-    if use_fp8_gemm:
-        latency = gflops / (gpu.fp8_tflops * 1024 * mfu)
-    # print(f"Debug: gemm m:{m} k:{k} n:{n}")
-    return latency
+from mfu.mfu import (
+    get_attn_decode_mfu,
+    get_attn_prefill_mfu,
+    get_gemm_mfu_and_latency,
+    get_gemm_memory_latency,
+)
 
 
 class MHA:
@@ -21,16 +15,16 @@ class MHA:
         self.config = config
         self.tp_size = tp_size
 
-    def get_attn_core_gflops(self, bs, kv_len):
-        # TP shards attention heads
-        tp_num_heads = self.config.num_attention_heads // self.tp_size
-        attn_core = (
-            gemm_flops(
-                bs, tp_num_heads * self.config.head_dim, kv_len
-            )
-            * 2
-        )
-        return attn_core / 1e9
+    # def get_attn_core_gflops(self, bs, kv_len):
+    #     # TP shards attention heads
+    #     tp_num_heads = self.config.num_attention_heads // self.tp_size
+    #     attn_core = (
+    #         gemm_flops(
+    #             bs, tp_num_heads * self.config.head_dim, kv_len
+    #         )
+    #         * 2
+    #     )
+    #     return attn_core / 1e9
 
     def decode_attn_core(self, bs, kv_len, kvcache_bytes, device_type):
         gpu = gpu_map[device_type]
@@ -83,33 +77,174 @@ class MHA:
         print("{:<40} {:<10.2f}".format("O_proj latency (us):", o_proj * 1e6))
         return qkv_proj + o_proj
 
-    def prefill_attn_core(self, seq_len, kvcache_bytes, device_type):
-        gpu = gpu_map[device_type]
-        attn_core_gflops = self.get_attn_core_gflops(1, seq_len)
-        attn_core_mfu = get_attn_prefill_mfu(self.config, seq_len, device_type, self.tp_size)
-        attn_core_time = (
-            seq_len * attn_core_gflops / 1.8 / (gpu.fp16_tflops * 1024 * attn_core_mfu)
-        )
-        kv_load_time = (
-            kvcache_bytes
-            * seq_len
-            / self.config.num_hidden_layers
-            / 1024
-            / 1024
-            / 1024
-            / gpu.mem_bw
-        )
+    def prefill_attn_core(self, bs, seq_len, device_type):
+        tp_num_heads = self.config.num_attention_heads // self.tp_size
+        tp_num_kv_heads = self.config.num_key_value_heads // self.tp_size
+        head_dim = self.config.head_dim
+        hidden_size = self.config.hidden_size
 
-        print("{:<40} {:<10.2f}".format("Attn core MFU:", attn_core_mfu))
+        # Fallback to qkv gemm.
+        # Q @ K^T shape: [bs, tp_num_heads, seq_len, head_dim] @ [bs, tp_num_heads, head_dim, seq_len]
+        q_kt_latency, q_kt_mfu = get_gemm_mfu_and_latency(
+            m=bs * tp_num_heads * seq_len,
+            k=head_dim,
+            n=seq_len,
+            device_type=device_type,
+            use_fp8_gemm=False,
+        )
         print(
-            "{:<40} {:<10.2f}".format("Attn core latency (us):", attn_core_time * 1e6)
+            "{:<40} {:<60}".format(
+                "Q @ K^T shape:",
+                f"[{bs},{tp_num_heads},{seq_len},{head_dim}]@[{bs},{tp_num_heads},{head_dim},{seq_len}]",
+            )
         )
-        print("{:<40} {:<10.2f}".format("KV loading latency (us):", kv_load_time * 1e6))
+        print("{:<40} {:<10.2f}".format("Q @ K^T MFU:", q_kt_mfu))
+        print("{:<40} {:<10.2f}".format("Q @ K^T latency (us):", q_kt_latency * 1e6))
+        q_kt_memory_latency = get_gemm_memory_latency(
+            m=seq_len,
+            k=head_dim,
+            n=seq_len,
+            device_type=device_type,
+            use_fp8_gemm=False,
+        )
+        q_kt_memory_latency *= bs * tp_num_heads
+        print(
+            "{:<40} {:<10.2f}".format(
+                "Q @ K^T memory latency (us):", q_kt_memory_latency * 1e6
+            )
+        )
+        q_kt_latency = max(q_kt_latency, q_kt_memory_latency)
 
-        return max(attn_core_time, kv_load_time)
+        # P @ V shape: [bs, tp_num_heads, seq_len, seq_len] @ [bs, tp_num_heads, seq_len, head_dim]
+        p_v_latency, p_v_mfu = get_gemm_mfu_and_latency(
+            m=bs * tp_num_heads * seq_len,
+            k=seq_len,
+            n=head_dim,
+            device_type=device_type,
+            use_fp8_gemm=False,
+        )
+        print(
+            "{:<40} {:<60}".format(
+                "P @ V shape:",
+                f"[{bs},{tp_num_heads},{seq_len},{seq_len}]@[{bs},{tp_num_heads},{seq_len},{head_dim}]",
+            )
+        )
+        print("{:<40} {:<10.2f}".format("P @ V MFU:", p_v_mfu))
+        print("{:<40} {:<10.2f}".format("P @ V latency (us):", p_v_latency * 1e6))
+        p_v_memory_latency = get_gemm_memory_latency(
+            m=seq_len,
+            k=seq_len,
+            n=head_dim,
+            device_type=device_type,
+            use_fp8_gemm=False,
+        )
+        p_v_memory_latency *= bs * tp_num_heads
+        print(
+            "{:<40} {:<10.2f}".format(
+                "P @ V memory latency (us):", p_v_memory_latency * 1e6
+            )
+        )
+        p_v_latency = max(p_v_latency, p_v_memory_latency)
+        return q_kt_latency + p_v_latency
 
-    def prefill_attn_others(self, seq_len, device_type):
-        return self.decode_attn_others(seq_len, device_type)
+    def prefill_attn_qkvo_proj(self, bs, seq_len, device_type):
+        tp_num_heads = self.config.num_attention_heads // self.tp_size
+        tp_num_kv_heads = self.config.num_key_value_heads // self.tp_size
+        head_dim = self.config.head_dim
+        hidden_size = self.config.hidden_size
+
+        # q_proj shape: [bs, seq_len, hidden_size] @ [hidden_size, tp_num_heads * head_dim]
+        print(
+            "{:<40} {:<60}".format(
+                "Q-proj shape:",
+                f"[{bs},{seq_len},{hidden_size}]@[{hidden_size},{tp_num_heads * head_dim}]",
+            )
+        )
+        q_proj_latency, q_proj_mfu = get_gemm_mfu_and_latency(
+            m=bs * seq_len,
+            k=hidden_size,
+            n=tp_num_heads * head_dim,
+            device_type=device_type,
+            use_fp8_gemm=self.use_fp8_gemm,
+        )
+        print("{:<40} {:<10.2f}".format("Q-proj MFU:", q_proj_mfu))
+        print("{:<40} {:<10.2f}".format("Q-proj latency (us):", q_proj_latency * 1e6))
+        q_proj_memory_latency = get_gemm_memory_latency(
+            m=bs * seq_len,
+            k=hidden_size,
+            n=tp_num_heads * head_dim,
+            device_type=device_type,
+            use_fp8_gemm=self.use_fp8_gemm,
+        )
+        print(
+            "{:<40} {:<10.2f}".format(
+                "Q-proj memory latency (us):", q_proj_memory_latency * 1e6
+            )
+        )
+        q_proj_latency = max(q_proj_latency, q_proj_memory_latency)
+
+        # kv_proj shape: [bs, seq_len, hidden_size] @ [hidden_size, tp_num_kv_heads * head_dim]
+        print(
+            "{:<40} {:<60}".format(
+                "KV-proj shape:",
+                f"[{bs},{seq_len},{hidden_size}]@[{hidden_size},{tp_num_kv_heads * head_dim}]",
+            )
+        )
+        kv_proj_latency, kv_proj_mfu = get_gemm_mfu_and_latency(
+            m=bs * seq_len,
+            k=hidden_size,
+            n=tp_num_kv_heads * head_dim,
+            device_type=device_type,
+            use_fp8_gemm=self.use_fp8_gemm,
+        )
+        kv_proj_latency *= 2
+        print("{:<40} {:<10.2f}".format("KV-proj MFU:", kv_proj_mfu))
+        print("{:<40} {:<10.2f}".format("KV-proj latency (us):", kv_proj_latency * 1e6))
+        kv_proj_memory_latency = get_gemm_memory_latency(
+            m=bs * seq_len,
+            k=hidden_size,
+            n=tp_num_kv_heads * head_dim,
+            device_type=device_type,
+            use_fp8_gemm=self.use_fp8_gemm,
+        )
+        kv_proj_memory_latency *= 2
+        print(
+            "{:<40} {:<10.2f}".format(
+                "KV-proj memory latency (us):", kv_proj_memory_latency * 1e6
+            )
+        )
+        kv_proj_latency = max(kv_proj_latency, kv_proj_memory_latency)
+
+        # o_proj shape: [bs, seq_len, tp_num_heads * head_dim] @ [tp_num_heads * head_dim, hidden_size]
+        print(
+            "{:<40} {:<60}".format(
+                "O-proj shape:",
+                f"[{bs},{seq_len},{tp_num_heads * head_dim}]@[{tp_num_heads * head_dim},{hidden_size}]",
+            )
+        )
+        o_proj_latency, o_proj_mfu = get_gemm_mfu_and_latency(
+            m=bs * seq_len,
+            k=tp_num_heads * head_dim,
+            n=hidden_size,
+            device_type=device_type,
+            use_fp8_gemm=self.use_fp8_gemm,
+        )
+        print("{:<40} {:<10.2f}".format("O-proj MFU:", o_proj_mfu))
+        print("{:<40} {:<10.2f}".format("O-proj latency (us):", o_proj_latency * 1e6))
+        o_proj_memory_latency = get_gemm_memory_latency(
+            m=bs * seq_len,
+            k=tp_num_heads * head_dim,
+            n=hidden_size,
+            device_type=device_type,
+            use_fp8_gemm=self.use_fp8_gemm,
+        )
+        print(
+            "{:<40} {:<10.2f}".format(
+                "O-proj memory latency (us):", o_proj_memory_latency * 1e6
+            )
+        )
+        o_proj_latency = max(o_proj_latency, o_proj_memory_latency)
+        return q_proj_latency + kv_proj_latency + o_proj_latency
 
 
 class MLA(MHA):
@@ -232,7 +367,9 @@ class MLA(MHA):
     def prefill_attn_core(self, seq_len, kvcache_bytes, device_type):
         gpu = gpu_map[device_type]
         attn_core_gflops = self.get_attn_core_gflops_noabsorb(1, seq_len)
-        attn_core_mfu = get_attn_prefill_mfu(self.config, seq_len, device_type, self.tp_size)
+        attn_core_mfu = get_attn_prefill_mfu(
+            self.config, seq_len, device_type, self.tp_size
+        )
         attn_core_time = (
             seq_len * attn_core_gflops / 1.8 / (gpu.fp16_tflops * 1024 * attn_core_mfu)
         )

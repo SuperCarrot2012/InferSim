@@ -15,6 +15,8 @@ class ModelConfig:
 
         self.hidden_size = d["hidden_size"]
         self.num_hidden_layers = d["num_hidden_layers"]
+        self.vocab_size = d.get("vocab_size", 0)
+        self.tie_word_embeddings = d.get("tie_word_embeddings", False)
 
         self.is_hybrid_linear = d.get("full_attention_interval") is not None
         if self.is_hybrid_linear:
