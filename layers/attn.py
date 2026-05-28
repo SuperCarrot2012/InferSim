@@ -5,6 +5,8 @@ from mfu.mfu import (
     get_attn_prefill_mfu,
     get_gemm_mfu_and_latency,
     get_gemm_memory_latency,
+    get_bmm_mfu_and_latency,
+    get_bmm_memory_latency,
 )
 
 
@@ -124,14 +126,15 @@ class MHA:
 
         # Fallback to qkv gemm.
         # Q @ K^T shape: [bs, tp_num_heads, seq_q_len, head_dim] @ [bs, tp_num_heads, head_dim, seq_kv_len]
-        q_kt_latency, q_kt_mfu = get_gemm_mfu_and_latency(
+        q_kt_latency, q_kt_mfu = get_bmm_mfu_and_latency(
+            b1=bs,
+            b2=tp_num_heads,
             m=seq_q_len,
             k=head_dim,
             n=seq_kv_len,
             device_type=device_type,
             use_fp8_gemm=False,
         )
-        q_kt_latency *= bs * tp_num_heads
         print(
             "{:<40} {:<60}".format(
                 "Q @ K^T shape:",
@@ -140,14 +143,15 @@ class MHA:
         )
         print("{:<40} {:<10.6f}".format("Q @ K^T MFU:", q_kt_mfu))
         print("{:<40} {:<10.2f}".format("Q @ K^T latency (us):", q_kt_latency * 1e6))
-        q_kt_memory_latency = get_gemm_memory_latency(
+        q_kt_memory_latency = get_bmm_memory_latency(
+            b1=bs,
+            b2=tp_num_heads,
             m=seq_q_len,
             k=head_dim,
             n=seq_kv_len,
             device_type=device_type,
             use_fp8_gemm=False,
         )
-        q_kt_memory_latency *= bs * tp_num_heads
         print(
             "{:<40} {:<10.2f}".format(
                 "Q @ K^T memory latency (us):", q_kt_memory_latency * 1e6
@@ -156,14 +160,15 @@ class MHA:
         q_kt_latency = max(q_kt_latency, q_kt_memory_latency)
 
         # P @ V shape: [bs, tp_num_heads, seq_q_len, seq_kv_len] @ [bs, tp_num_heads, seq_kv_len, head_dim]
-        p_v_latency, p_v_mfu = get_gemm_mfu_and_latency(
+        p_v_latency, p_v_mfu = get_bmm_mfu_and_latency(
+            b1=bs,
+            b2=tp_num_heads,
             m=seq_q_len,
             k=seq_kv_len,
             n=head_dim,
             device_type=device_type,
             use_fp8_gemm=False,
         )
-        p_v_latency *= bs * tp_num_heads
         print(
             "{:<40} {:<60}".format(
                 "P @ V shape:",
@@ -172,14 +177,15 @@ class MHA:
         )
         print("{:<40} {:<10.6f}".format("P @ V MFU:", p_v_mfu))
         print("{:<40} {:<10.2f}".format("P @ V latency (us):", p_v_latency * 1e6))
-        p_v_memory_latency = get_gemm_memory_latency(
+        p_v_memory_latency = get_bmm_memory_latency(
+            b1=bs,
+            b2=tp_num_heads,
             m=seq_q_len,
             k=seq_kv_len,
             n=head_dim,
             device_type=device_type,
             use_fp8_gemm=False,
         )
-        p_v_memory_latency *= bs * tp_num_heads
         print(
             "{:<40} {:<10.2f}".format(
                 "P @ V memory latency (us):", p_v_memory_latency * 1e6
@@ -199,14 +205,15 @@ class MHA:
 
         # Fallback to qkv gemm.
         # Q @ K^T shape: [bs, tp_num_heads, seq_len, head_dim] @ [bs, tp_num_heads, head_dim, seq_len]
-        q_kt_latency, q_kt_mfu = get_gemm_mfu_and_latency(
+        q_kt_latency, q_kt_mfu = get_bmm_mfu_and_latency(
+            b1=bs,
+            b2=tp_num_heads,
             m=seq_len,
             k=head_dim,
             n=seq_len,
             device_type=device_type,
             use_fp8_gemm=False,
         )
-        q_kt_latency *= bs * tp_num_heads
         print(
             "{:<40} {:<60}".format(
                 "Q @ K^T shape:",
@@ -215,14 +222,15 @@ class MHA:
         )
         print("{:<40} {:<10.6f}".format("Q @ K^T MFU:", q_kt_mfu))
         print("{:<40} {:<10.2f}".format("Q @ K^T latency (us):", q_kt_latency * 1e6))
-        q_kt_memory_latency = get_gemm_memory_latency(
+        q_kt_memory_latency = get_bmm_memory_latency(
+            b1=bs,
+            b2=tp_num_heads,
             m=seq_len,
             k=head_dim,
             n=seq_len,
             device_type=device_type,
             use_fp8_gemm=False,
         )
-        q_kt_memory_latency *= bs * tp_num_heads
         print(
             "{:<40} {:<10.2f}".format(
                 "Q @ K^T memory latency (us):", q_kt_memory_latency * 1e6
@@ -231,14 +239,15 @@ class MHA:
         q_kt_latency = max(q_kt_latency, q_kt_memory_latency)
 
         # P @ V shape: [bs, tp_num_heads, seq_len, seq_len] @ [bs, tp_num_heads, seq_len, head_dim]
-        p_v_latency, p_v_mfu = get_gemm_mfu_and_latency(
+        p_v_latency, p_v_mfu = get_bmm_mfu_and_latency(
+            b1=bs,
+            b2=tp_num_heads,
             m=seq_len,
             k=seq_len,
             n=head_dim,
             device_type=device_type,
             use_fp8_gemm=False,
         )
-        p_v_latency *= bs * tp_num_heads
         print(
             "{:<40} {:<60}".format(
                 "P @ V shape:",
@@ -247,14 +256,15 @@ class MHA:
         )
         print("{:<40} {:<10.6f}".format("P @ V MFU:", p_v_mfu))
         print("{:<40} {:<10.2f}".format("P @ V latency (us):", p_v_latency * 1e6))
-        p_v_memory_latency = get_gemm_memory_latency(
+        p_v_memory_latency = get_bmm_memory_latency(
+            b1=bs,
+            b2=tp_num_heads,
             m=seq_len,
             k=seq_len,
             n=head_dim,
             device_type=device_type,
             use_fp8_gemm=False,
         )
-        p_v_memory_latency *= bs * tp_num_heads
         print(
             "{:<40} {:<10.2f}".format(
                 "P @ V memory latency (us):", p_v_memory_latency * 1e6

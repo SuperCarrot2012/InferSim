@@ -5,6 +5,10 @@ def gemm_flops(m, n, k):
     return 2.0 * m * n * k
 
 
+def bmm_flops(b1, b2, m, k, n):
+    return 2.0 * b1 * b2 * m * k * n
+
+
 def get_mha_gflops(config, bs, avg_context_len, tp_size):
     # TP shards heads; hidden_size is NOT sharded
     tp_num_heads = config.num_attention_heads // tp_size

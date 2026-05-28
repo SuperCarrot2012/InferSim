@@ -2,7 +2,7 @@ import csv
 import os
 
 from hardware.gpu import gpu_map
-from flops.flops import gemm_flops
+from flops.flops import gemm_flops, bmm_flops
 
 
 def get_gemm_mfu_and_latency(m, k, n, device_type, use_fp8_gemm):
@@ -16,12 +16,32 @@ def get_gemm_mfu_and_latency(m, k, n, device_type, use_fp8_gemm):
     return latency, mfu
 
 
+def get_bmm_mfu_and_latency(b1, b2, m, k, n, device_type, use_fp8_gemm):
+    gpu = gpu_map[device_type]
+    gflops = bmm_flops(b1, b2, m, k, n) / 1e9
+    mfu = get_bmm_mfu(device_type, b1, b2, m, k, n)
+    latency = gflops / (gpu.fp16_tflops * 1024 * mfu)
+    if use_fp8_gemm:
+        latency = gflops / (gpu.fp8_tflops * 1024 * mfu)
+    return latency, mfu
+
+
 def get_gemm_memory_latency(m, k, n, device_type, use_fp8_gemm):
     gpu = gpu_map[device_type]
     bytes_per_element = 1 if use_fp8_gemm else 2
     m_a = m * k * bytes_per_element
     m_b = k * n * bytes_per_element
     m_c = m * n * bytes_per_element
+    latency = (m_a + m_b + m_c) / (1024 * 1024 * 1024) / gpu.mem_bw
+    return latency
+
+
+def get_bmm_memory_latency(b1, b2, m, k, n, device_type, use_fp8_gemm):
+    gpu = gpu_map[device_type]
+    bytes_per_element = 1 if use_fp8_gemm else 2
+    m_a = b1 * b2 * m * k * bytes_per_element
+    m_b = b1 * b2 * k * n * bytes_per_element
+    m_c = b1 * b2 * m * n * bytes_per_element
     latency = (m_a + m_b + m_c) / (1024 * 1024 * 1024) / gpu.mem_bw
     return latency
 
@@ -220,6 +240,43 @@ def get_gemm_mfu(device_type, m, k, n):
         if k_ == mfu_k and n_ == mfu_n and m_ >= m:
             mfu = float(row[4])
             break
+
+    # Benchmark mfu is usually slightly higher than the actual performance, so we multiply by 0.9 to get a more realistic result.
+    mfu *= 0.90
+
+    return round(mfu, 6)
+
+
+def get_bmm_mfu(device_type, b1, b2, m, k, n):
+    gpu = gpu_map[device_type]
+    file_name = f"bench_data/bmm/{device_type.lower()}/data.csv"
+    if not os.path.exists(file_name):
+        print(f"Warning: {file_name} not exists")
+        return gpu.mfu
+
+    mfu = gpu.mfu
+    dist = 1e9
+    # row: b1,b2,m,k,n,latency_us,mfu
+    with open(file_name, "r") as f:
+        reader = csv.reader(f)
+        next(reader)
+        for row in reader:
+            b1_ = int(row[0])
+            b2_ = int(row[1])
+            m_ = int(row[2])
+            k_ = int(row[3])
+            n_ = int(row[4])
+            if b1_ < b1 or b2_ < b2 or m_ < m or k_ < k or n_ < n:
+                continue
+            if (b1_ - b1) ** 2 + (b2_ - b2) ** 2 + (m - m_) ** 2 + (k - k_) ** 2 + (n - n_) ** 2 < dist:
+                dist = (
+                    (b1_ - b1) ** 2
+                    + (b2_ - b2) ** 2
+                    + (m - m_) ** 2
+                    + (k - k_) ** 2
+                    + (n - n_) ** 2
+                )
+                mfu = float(row[6])
 
     # Benchmark mfu is usually slightly higher than the actual performance, so we multiply by 0.9 to get a more realistic result.
     mfu *= 0.90
