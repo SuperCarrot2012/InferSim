@@ -28,69 +28,76 @@ class MoE:
 
         # TP shards intermediate_size; hidden_size is NOT sharded
         tp_intermediate_size = self.config.intermediate_size // self.tp_size
-        routed_experts_gflops = gemm_flops(
-            bs * seq_len, self.config.hidden_size, tp_intermediate_size
-        )
-        routed_experts_gflops *= self.config.num_experts_per_tok * 3.0 / 1e9
+        hidden_size = self.config.hidden_size
 
-        if self.config.is_moe:
-            routed_experts_mfu = max(
-                get_groupedgemm_prefill_mfu(
-                    self.config,
-                    seq_len,
-                    device_type,
-                    num_gpus,
-                    self.use_fp8_gemm,
-                    self.tp_size,
-                )
-            )
-        else:  # Dense FFN is treated as a special 1-expert MoE
-            routed_experts_mfu = get_gemm_mfu(
-                device_type,
-                bs * seq_len,
-                self.config.hidden_size,
-                tp_intermediate_size,
-            )
-
-        routed_experts_latency = routed_experts_gflops / (
-            gpu.fp16_tflops * 1024 * routed_experts_mfu
-        )
-        if self.use_fp8_gemm:
-            routed_experts_latency = routed_experts_gflops / (
-                gpu.fp8_tflops * 1024 * routed_experts_mfu
-            )
-
-        up_proj_memory_latency = get_gemm_memory_latency(
+        gate_proj_latency, gate_proj_mfu = get_gemm_mfu_and_latency(
             m=bs * seq_len,
-            k=self.config.hidden_size,
+            k=hidden_size,
             n=tp_intermediate_size,
             device_type=device_type,
             use_fp8_gemm=self.use_fp8_gemm,
         )
-        gate_proj_memory_latency = up_proj_memory_latency
-        down_proj_memory_latency = get_gemm_memory_latency(
+        gate_proj_memory_latency = get_gemm_memory_latency(
             m=bs * seq_len,
-            k=tp_intermediate_size,
-            n=self.config.hidden_size,
+            k=hidden_size,
+            n=tp_intermediate_size,
             device_type=device_type,
             use_fp8_gemm=self.use_fp8_gemm,
         )
-        moe_memory_latency = (
-            up_proj_memory_latency + gate_proj_memory_latency + down_proj_memory_latency
+        print(
+            "{:<40} {:<60}".format(
+                "FFN Gate/Up-proj shape:",
+                f"[{bs},{seq_len},{hidden_size}]@[{hidden_size},{tp_intermediate_size}]",
+            )
         )
+        print("{:<40} {:<10.6f}".format("FFN Gate/Up-proj MFU:", gate_proj_mfu))
+        print(
+            "{:<40} {:<10.2f}".format(
+                "FFN Gate/Up-proj latency (us):", gate_proj_latency * 1e6
+            )
+        )
+        print(
+            "{:<40} {:<10.2f}".format(
+                "FFN Gate/Up-proj memory latency (us):", gate_proj_memory_latency * 1e6
+            )
+        )
+        gate_proj_latency = max(gate_proj_latency, gate_proj_memory_latency)
+        up_proj_latency = gate_proj_latency
 
-        print("{:<40} {:<10.6f}".format("Routed experts MFU:", routed_experts_mfu))
+        down_proj_latency, down_proj_mfu = get_gemm_mfu_and_latency(
+            m=bs * seq_len,
+            k=tp_intermediate_size,
+            n=hidden_size,
+            device_type=device_type,
+            use_fp8_gemm=self.use_fp8_gemm,
+        )
+        down_proj_memory_latency = get_gemm_memory_latency(
+            m=bs * seq_len,
+            k=tp_intermediate_size,
+            n=hidden_size,
+            device_type=device_type,
+            use_fp8_gemm=self.use_fp8_gemm,
+        )
+        print(
+            "{:<40} {:<60}".format(
+                "FFN Down-proj shape:",
+                f"[{bs},{seq_len},{tp_intermediate_size}]@[{tp_intermediate_size},{hidden_size}]",
+            )
+        )
+        print("{:<40} {:<10.6f}".format("FFN Down-proj MFU:", down_proj_mfu))
         print(
             "{:<40} {:<10.2f}".format(
-                "Routed experts latency (us):", routed_experts_latency * 1e6
+                "FFN Down-proj latency (us):", down_proj_latency * 1e6
             )
         )
         print(
             "{:<40} {:<10.2f}".format(
-                "Experts memory latency (us):", moe_memory_latency * 1e6
+                "FFN Down-proj memory latency (us):", down_proj_memory_latency * 1e6
             )
         )
-        t = max(routed_experts_latency, moe_memory_latency)
+        down_proj_latency = max(down_proj_latency, down_proj_memory_latency)
+
+        t = gate_proj_latency + up_proj_latency + down_proj_latency
 
         if self.config.num_shared_experts > 0:
             # TP shards intermediate_size; hidden_size is NOT sharded
