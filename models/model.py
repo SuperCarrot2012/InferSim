@@ -168,6 +168,47 @@ class Model:
             )
         )
 
+    def rope_apply(self, bs, seq_len, device_type):
+        head_dim = self.config.head_dim
+        tp_num_heads = self.config.num_attention_heads // self.args.tp_size
+
+        # twice
+        mul = (
+            get_elementwise_memory_latency(
+                [
+                    [2, [bs, tp_num_heads, seq_len, head_dim]],
+                    [2, [bs, 1, seq_len, head_dim]],
+                    [2, [bs, tp_num_heads, seq_len, head_dim]],
+                ],
+                device_type,
+            )
+            * 2
+        )
+        neg = get_elementwise_memory_latency(
+            [
+                [2, [bs, tp_num_heads, seq_len, head_dim / 2]],
+                [2, [bs, tp_num_heads, seq_len, head_dim / 2]],
+            ],
+            device_type,
+        )
+        cat = get_elementwise_memory_latency(
+            [
+                [2, [bs, tp_num_heads, seq_len, head_dim]],
+                [2, [bs, tp_num_heads, seq_len, head_dim]],
+            ],
+            device_type,
+        )
+        add = get_elementwise_memory_latency(
+            [
+                [2, [bs, tp_num_heads, seq_len, head_dim]],
+                [2, [bs, tp_num_heads, seq_len, head_dim]],
+                [2, [bs, tp_num_heads, seq_len, head_dim]],
+            ],
+            device_type,
+        )
+        # Including q and k embed
+        return (mul + neg + cat + add) * 2
+
     def rms_norm(self, bs, seq_len, device_type):
         hidden_size = self.config.hidden_size
 
@@ -231,6 +272,43 @@ class Model:
         )
         return to_fp32 + pow_op + mean + add + rsqrt + mul_1 + to_fp16 + mul_2
 
+    def kv_update(self, bs, seq_len, device_type):
+        tp_num_kv_heads = self.config.num_key_value_heads // self.args.tp_size
+        head_dim = self.config.head_dim
+        cat = (
+            get_elementwise_memory_latency(
+                [
+                    [2, [bs, tp_num_kv_heads, seq_len, head_dim]],
+                    [2, [bs, tp_num_kv_heads, 1, head_dim]],
+                    [2, [bs, tp_num_kv_heads, seq_len + 1, head_dim]],
+                ],
+                device_type,
+            )
+            * 2
+        )
+        split_kv = (
+            get_elementwise_memory_latency(
+                [
+                    [2, [bs, tp_num_kv_heads, seq_len, head_dim]],
+                    [2, [bs, tp_num_kv_heads, seq_len, head_dim]],
+                ],
+                device_type,
+            )
+            * 2
+        )
+        return cat + split_kv
+
+    def residual_add(self, bs, seq_len, device_type):
+        hidden_size = self.config.hidden_size
+        add = get_elementwise_memory_latency(
+            [
+                [2, [bs, seq_len, hidden_size]],
+                [2, [bs, seq_len, hidden_size]],
+            ],
+            device_type,
+        )
+        return add
+
     def prefill(self):
         print("{s:{c}^{n}}".format(s="Prefilling", n=50, c="-"))
         attn = create_attention(
@@ -251,12 +329,34 @@ class Model:
             self.args.world_size,
         )
 
+        rope_apply = self.rope_apply(
+            self.target_bs, self.args.target_isl, self.args.device_type
+        )
+        print("{:<40} {:<10.2f}".format("Rope apply latency (us):", rope_apply * 1e6))
+
+        kv_update = self.kv_update(
+            self.target_bs, self.args.target_isl, self.args.device_type
+        )
+        print("{:<40} {:<10.2f}".format("KV update latency (us):", kv_update * 1e6))
+
         # Including pre and post rms_norm
         rms_norm = (
             self.rms_norm(self.target_bs, self.args.target_isl, self.args.device_type)
             * 2
         )
         print("{:<40} {:<10.2f}".format("RMS norm latency twice (us):", rms_norm * 1e6))
+
+        residual_add = (
+            self.residual_add(
+                self.target_bs, self.args.target_isl, self.args.device_type
+            )
+            * 2
+        )
+        print(
+            "{:<40} {:<10.2f}".format(
+                "Residual add latency twice (us):", residual_add * 1e6
+            )
+        )
 
         comm = Comm(
             self.config,
@@ -322,13 +422,16 @@ class Model:
         else:
             ttft = attn_qkvo_proj_time + attn_core_time
             ttft += moe_time
+            ttft += rope_apply
+            ttft += kv_update
             ttft += rms_norm
+            ttft += residual_add
             ttft += comm_time1 + comm_time2
             ttft += tp_comm_time  # Add TP communication time
         ttft *= self.config.num_hidden_layers
         ttft += lm_head_time
         ttft *= 1000  # convert to ms
-        # ttft += 30  # for scheduler
+        ttft += 5  # for scheduler
 
         print("{:<40} {:<10.2f}".format("TTFT (ms):", ttft))
         print(
@@ -357,9 +460,24 @@ class Model:
             self.target_bs, self.args.device_type, self.args.world_size
         )
 
+        rope_apply = self.rope_apply(self.target_bs, 1, self.args.device_type)
+        print("{:<40} {:<10.2f}".format("Rope apply latency (us):", rope_apply * 1e6))
+
+        kv_update = self.kv_update(
+            self.target_bs, self.avg_context_len, self.args.device_type
+        )
+        print("{:<40} {:<10.2f}".format("KV update latency (us):", kv_update * 1e6))
+
         # Including pre and post rms_norm
         rms_norm = self.rms_norm(self.target_bs, 1, self.args.device_type) * 2
         print("{:<40} {:<10.2f}".format("RMS norm latency twice (us):", rms_norm * 1e6))
+
+        residual_add = self.residual_add(self.target_bs, 1, self.args.device_type) * 2
+        print(
+            "{:<40} {:<10.2f}".format(
+                "Residual add latency twice (us):", residual_add * 1e6
+            )
+        )
 
         comm = Comm(
             self.config,
@@ -417,13 +535,16 @@ class Model:
         else:
             tpot = attn_qkvo_proj_time + attn_core_time
             tpot += moe_time
+            tpot += rope_apply
+            tpot += kv_update
             tpot += rms_norm
+            tpot += residual_add
             tpot += comm_time1 + comm_time2
             tpot += tp_comm_time  # Add TP communication time
         tpot *= self.config.num_hidden_layers
         tpot += lm_head_time
         tpot *= 1000  # convert to ms
-        # tpot += 5  # for scheduler
+        tpot += 5  # for scheduler
 
         print("{:<40} {:<10.2f}".format("TPOT (ms):", tpot))
         print(
