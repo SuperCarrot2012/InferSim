@@ -6,7 +6,11 @@ from hardware.gpu import gpu_map
 from kvcache.kvcache import get_kvcache_size
 from layers.attn import create_attention
 from layers.moe import MoE
-from mfu.mfu import get_gemm_mfu_and_latency, get_gemm_memory_latency
+from mfu.mfu import (
+    get_elementwise_memory_latency,
+    get_gemm_mfu_and_latency,
+    get_gemm_memory_latency,
+)
 from params.params import (
     get_attn_params_size,
     get_embed_lm_head_params_size,
@@ -164,6 +168,69 @@ class Model:
             )
         )
 
+    def rms_norm(self, bs, seq_len, device_type):
+        hidden_size = self.config.hidden_size
+
+        to_fp32 = get_elementwise_memory_latency(
+            [
+                [2, [bs, seq_len, hidden_size]],
+                [4, [bs, seq_len, hidden_size]],
+            ],
+            device_type,
+        )
+        pow_op = get_elementwise_memory_latency(
+            [
+                [4, [bs, seq_len, hidden_size]],
+                [4, [bs, seq_len, hidden_size]],
+            ],
+            device_type,
+        )
+        mean = get_elementwise_memory_latency(
+            [
+                [4, [bs, seq_len, hidden_size]],
+                [4, [bs, seq_len]],
+            ],
+            device_type,
+        )
+        add = get_elementwise_memory_latency(
+            [
+                [4, [bs, seq_len]],
+                [4, [bs, seq_len]],
+            ],
+            device_type,
+        )
+        rsqrt = get_elementwise_memory_latency(
+            [
+                [4, [bs, seq_len]],
+                [4, [bs, seq_len]],
+            ],
+            device_type,
+        )
+        mul_1 = get_elementwise_memory_latency(
+            [
+                [4, [bs, seq_len, hidden_size]],
+                [4, [bs, seq_len]],
+                [4, [bs, seq_len, hidden_size]],
+            ],
+            device_type,
+        )
+        to_fp16 = get_elementwise_memory_latency(
+            [
+                [4, [bs, seq_len, hidden_size]],
+                [2, [bs, seq_len, hidden_size]],
+            ],
+            device_type,
+        )
+        mul_2 = get_elementwise_memory_latency(
+            [
+                [2, [bs, seq_len, hidden_size]],
+                [2, [hidden_size]],
+                [2, [bs, seq_len, hidden_size]],
+            ],
+            device_type,
+        )
+        return to_fp32 + pow_op + mean + add + rsqrt + mul_1 + to_fp16 + mul_2
+
     def prefill(self):
         print("{s:{c}^{n}}".format(s="Prefilling", n=50, c="-"))
         attn = create_attention(
@@ -183,6 +250,13 @@ class Model:
             self.args.device_type,
             self.args.world_size,
         )
+
+        # Including pre and post rms_norm
+        rms_norm = (
+            self.rms_norm(self.target_bs, self.args.target_isl, self.args.device_type)
+            * 2
+        )
+        print("{:<40} {:<10.2f}".format("RMS norm latency twice (us):", rms_norm * 1e6))
 
         comm = Comm(
             self.config,
@@ -248,12 +322,13 @@ class Model:
         else:
             ttft = attn_qkvo_proj_time + attn_core_time
             ttft += moe_time
+            ttft += rms_norm
             ttft += comm_time1 + comm_time2
             ttft += tp_comm_time  # Add TP communication time
         ttft *= self.config.num_hidden_layers
         ttft += lm_head_time
         ttft *= 1000  # convert to ms
-        ttft += 30  # for scheduler
+        # ttft += 30  # for scheduler
 
         print("{:<40} {:<10.2f}".format("TTFT (ms):", ttft))
         print(
@@ -281,6 +356,10 @@ class Model:
         moe_time = moe.decode_moe(
             self.target_bs, self.args.device_type, self.args.world_size
         )
+
+        # Including pre and post rms_norm
+        rms_norm = self.rms_norm(self.target_bs, 1, self.args.device_type) * 2
+        print("{:<40} {:<10.2f}".format("RMS norm latency twice (us):", rms_norm * 1e6))
 
         comm = Comm(
             self.config,
@@ -338,12 +417,13 @@ class Model:
         else:
             tpot = attn_qkvo_proj_time + attn_core_time
             tpot += moe_time
+            tpot += rms_norm
             tpot += comm_time1 + comm_time2
             tpot += tp_comm_time  # Add TP communication time
         tpot *= self.config.num_hidden_layers
         tpot += lm_head_time
         tpot *= 1000  # convert to ms
-        tpot += 5  # for scheduler
+        # tpot += 5  # for scheduler
 
         print("{:<40} {:<10.2f}".format("TPOT (ms):", tpot))
         print(

@@ -13,6 +13,7 @@ class GPU:
     frequency: float = None  # MHz
     num_sm: int = None
     sm_version: int = None
+    min_latency_us: float = 0  # min laytency once kernel is launched
 
 
 h20 = GPU(
@@ -72,6 +73,7 @@ a100 = GPU(
     frequency=1410 * 0.9,
     num_sm=108,
     sm_version=80,
+    min_latency_us=4,
 )
 
 gpu_map = {"H20": h20, "H800": h800, "H200": h200, "GB200": gb200, "A100": a100}

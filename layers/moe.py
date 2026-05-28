@@ -4,6 +4,7 @@ from layers.attn import get_gemm_mfu_and_latency
 from mfu.mfu import (
     get_gemm_mfu,
     get_gemm_memory_latency,
+    get_elementwise_memory_latency,
     get_groupedgemm_decode_mfu,
     get_groupedgemm_prefill_mfu,
 )
@@ -97,7 +98,32 @@ class MoE:
         )
         down_proj_latency = max(down_proj_latency, down_proj_memory_latency)
 
+        # act_fn laytency, memory bound
+        act_fn_memory_latency = get_elementwise_memory_latency(
+            [
+                [2, [bs, seq_len, tp_intermediate_size]],  # input
+                [2, [bs, seq_len, tp_intermediate_size]],  # output
+            ],
+            device_type,
+        )
+        # mul laytency, memory bound
+        mul_memory_latency = get_elementwise_memory_latency(
+            [
+                [2, [bs, seq_len, tp_intermediate_size]],  # input1
+                [2, [bs, seq_len, tp_intermediate_size]],  # input2
+                [2, [bs, seq_len, tp_intermediate_size]],  # output
+            ],
+            device_type,
+        )
+        other_latency = act_fn_memory_latency + mul_memory_latency
+        print(
+            "{:<40} {:<10.2f}".format(
+                "FFN Act_fn&Mul latency (us):", other_latency * 1e6
+            )
+        )
+
         t = gate_proj_latency + up_proj_latency + down_proj_latency
+        t += other_latency
 
         if self.config.num_shared_experts > 0:
             # TP shards intermediate_size; hidden_size is NOT sharded
