@@ -77,8 +77,8 @@ class Model:
         ) * self.config.num_hidden_layers + embed_lm_bytes
         params_per_gpu = params_per_gpu / 1024 / 1024 / 1024
         self.kvcache_mem = (
-            self.gpu.mem - params_per_gpu - 15 - 5
-        )  # 15GB for runtime, 5GB for encoder
+            self.gpu.mem - params_per_gpu - 5
+        )  # 5GB for runtime/activation
         print("{:<40} {:<10.2f}".format("Per GPU params size (GB):", params_per_gpu))
 
     def print_kvcache_info(self):
