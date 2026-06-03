@@ -224,7 +224,7 @@ def get_gemm_mfu(device_type, m, k, n):
 
     mfu_k = 0
     mfu_n = 0
-    dist = 1e9
+    dist = float("inf")
     # row: m,k,n,latency_us,mfu
     rows = list()
     with open(file_name, "r") as f:
@@ -264,7 +264,7 @@ def get_bmm_mfu(device_type, b1, b2, m, k, n):
         return gpu.mfu
 
     mfu = gpu.mfu
-    dist = 1e9
+    dist = float("inf")
     # row: b1,b2,m,k,n,latency_us,mfu
     with open(file_name, "r") as f:
         reader = csv.reader(f)

@@ -361,42 +361,44 @@ class Model:
         comm = Comm(
             self.config,
             self.gpu,
-            self.args.world_size,
-            self.args.num_nodes,
-            self.args.enable_deepep,
+            self.args.tp_size,
+            self.args.device_type,
         )
         comm_time1, comm_time2 = comm.prefill_comm(
-            self.target_bs * self.args.target_isl
-        )
-        print("{:<40} {:<10.2f}".format("Comm before MoE/FFN (us):", comm_time1 * 1e6))
-        print("{:<40} {:<10.2f}".format("Comm after MoE/FFN (us):", comm_time2 * 1e6))
-
-        # TP all_reduce communication time
-        tp_comm_time = comm.tp_all_reduce(
-            self.target_bs * self.args.target_isl, self.args.tp_size
+            self.target_bs, self.args.target_isl
         )
         if self.args.tp_size > 1:
-            print("{:<40} {:<10.2f}".format("TP all_reduce (us):", tp_comm_time * 1e6))
+            print(
+                "{:<40} {:<10.2f}".format(
+                    "TP all_reduce after O_proj (us):", comm_time1 * 1e6
+                )
+            )
+            print(
+                "{:<40} {:<10.2f}".format(
+                    "TP all_reduce after down_proj (us):", comm_time2 * 1e6
+                )
+            )
 
         # LM head shape: [bs, seq_len, hidden_size] @ [hidden_size, vocab_size]
+        tp_vocab_size = self.config.vocab_size // self.args.tp_size
         lm_head_latency, lm_head_mfu = get_gemm_mfu_and_latency(
             m=self.target_bs * self.args.target_isl,
             k=self.config.hidden_size,
-            n=self.config.vocab_size,
+            n=tp_vocab_size,
             device_type=self.args.device_type,
             use_fp8_gemm=self.args.use_fp8_gemm,
         )
         lm_head_memory_latency = get_gemm_memory_latency(
             m=self.target_bs * self.args.target_isl,
             k=self.config.hidden_size,
-            n=self.config.vocab_size,
+            n=tp_vocab_size,
             device_type=self.args.device_type,
             use_fp8_gemm=self.args.use_fp8_gemm,
         )
         print(
             "{:<40} {:<60}".format(
                 "LM head shape:",
-                f"[{self.target_bs},{self.args.target_isl},{self.config.hidden_size}]@[{self.config.hidden_size},{self.config.vocab_size}]",
+                f"[{self.target_bs},{self.args.target_isl},{self.config.hidden_size}]@[{self.config.hidden_size},{tp_vocab_size}]",
             )
         )
         print("{:<40} {:<10.6f}".format("LM head MFU:", lm_head_mfu))
@@ -407,6 +409,13 @@ class Model:
             )
         )
         lm_head_time = max(lm_head_latency, lm_head_memory_latency)
+
+        if (self.args.tp_size > 1):
+            lm_head_per_rank_bytes = self.target_bs * self.args.target_isl * tp_vocab_size * 2
+            lm_head_gather_time = comm.all_gather_latency_s(lm_head_per_rank_bytes)
+            print("{:<40} {:<10.2f}".format("LM head all_gather latency (us):", lm_head_gather_time * 1e6))
+        else:
+            lm_head_gather_time = 0.0
 
         num_tokens = self.target_bs * self.args.target_isl
         if self.args.enable_tbo:
@@ -427,17 +436,16 @@ class Model:
             ttft += rms_norm
             ttft += residual_add
             ttft += comm_time1 + comm_time2
-            ttft += tp_comm_time  # Add TP communication time
         ttft *= self.config.num_hidden_layers
-        ttft += lm_head_time
+        ttft += lm_head_time + lm_head_gather_time
         ttft *= 1000  # convert to ms
         ttft += 5  # for scheduler
 
         print("{:<40} {:<10.2f}".format("TTFT (ms):", ttft))
         print(
             "{:<40} {:<10.0f}".format(
-                "Throughput (TGS:tok/GPU/s):",
-                num_tokens / self.args.tp_size / (ttft / 1000),
+                "Throughput (token/s):",
+                num_tokens / (ttft / 1000),
             )
         )
 
@@ -482,38 +490,42 @@ class Model:
         comm = Comm(
             self.config,
             self.gpu,
-            self.args.world_size,
-            self.args.num_nodes,
-            self.args.enable_deepep,
+            self.args.tp_size,
+            self.args.device_type,
         )
         comm_time1, comm_time2 = comm.decode_comm(self.target_bs)
-        print("{:<40} {:<10.2f}".format("Comm before MoE/FFN (us):", comm_time1 * 1e6))
-        print("{:<40} {:<10.2f}".format("Comm after MoE/FFN (us):", comm_time2 * 1e6))
-
-        # TP all_reduce communication time
-        tp_comm_time = comm.tp_all_reduce(self.target_bs, self.args.tp_size)
         if self.args.tp_size > 1:
-            print("{:<40} {:<10.2f}".format("TP all_reduce (us):", tp_comm_time * 1e6))
+            print(
+                "{:<40} {:<10.2f}".format(
+                    "TP all_reduce after O_proj (us):", comm_time1 * 1e6
+                )
+            )
+            print(
+                "{:<40} {:<10.2f}".format(
+                    "TP all_reduce after down_proj (us):", comm_time2 * 1e6
+                )
+            )
 
         # LM head shape: [bs, seq_len, hidden_size] @ [hidden_size, vocab_size]
+        tp_vocab_size = self.config.vocab_size // self.args.tp_size
         lm_head_latency, lm_head_mfu = get_gemm_mfu_and_latency(
             m=self.target_bs * 1,
             k=self.config.hidden_size,
-            n=self.config.vocab_size,
+            n=tp_vocab_size,
             device_type=self.args.device_type,
             use_fp8_gemm=self.args.use_fp8_gemm,
         )
         lm_head_memory_latency = get_gemm_memory_latency(
             m=self.target_bs * 1,
             k=self.config.hidden_size,
-            n=self.config.vocab_size,
+            n=tp_vocab_size,
             device_type=self.args.device_type,
             use_fp8_gemm=self.args.use_fp8_gemm,
         )
         print(
             "{:<40} {:<60}".format(
                 "LM head shape:",
-                f"[{self.target_bs},{1},{self.config.hidden_size}]@[{self.config.hidden_size},{self.config.vocab_size}]",
+                f"[{self.target_bs},{1},{self.config.hidden_size}]@[{self.config.hidden_size},{tp_vocab_size}]",
             )
         )
         print("{:<40} {:<10.6f}".format("LM head MFU:", lm_head_mfu))
@@ -525,7 +537,14 @@ class Model:
         )
         lm_head_time = max(lm_head_latency, lm_head_memory_latency)
 
-        num_tokens = self.target_bs
+        if (self.args.tp_size > 1):
+            lm_head_per_rank_bytes = self.target_bs * 1 * tp_vocab_size * 2
+            lm_head_gather_time = comm.all_gather_latency_s(lm_head_per_rank_bytes)
+            print("{:<40} {:<10.2f}".format("LM head all_gather latency (us):", lm_head_gather_time * 1e6))
+        else:
+            lm_head_gather_time = 0.0
+
+        num_tokens = self.target_bs * 1
         if self.args.enable_tbo:
             num_tokens *= 2
             tpot = max(
@@ -540,17 +559,16 @@ class Model:
             tpot += rms_norm
             tpot += residual_add
             tpot += comm_time1 + comm_time2
-            tpot += tp_comm_time  # Add TP communication time
         tpot *= self.config.num_hidden_layers
-        tpot += lm_head_time
+        tpot += lm_head_time + lm_head_gather_time
         tpot *= 1000  # convert to ms
         tpot += 5  # for scheduler
 
         print("{:<40} {:<10.2f}".format("TPOT (ms):", tpot))
         print(
             "{:<40} {:<10.0f}".format(
-                "Throughput (TGS:tok/GPU/s):",
-                num_tokens / self.args.tp_size / (tpot / 1000),
+                "Throughput (token/s):",
+                num_tokens / (tpot / 1000),
             )
         )
         # if tpot > self.args.target_tpot:

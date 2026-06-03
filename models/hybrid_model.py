@@ -205,18 +205,14 @@ class HybridModel:
         comm = Comm(
             self.config,
             self.gpu,
-            self.args.world_size,
-            self.args.num_nodes,
-            self.args.enable_deepep,
+            self.args.tp_size,
+            self.args.device_type,
         )
-        comm_t1, comm_t2 = comm.prefill_comm(self.args.max_prefill_tokens)
+        comm_t1, comm_t2 = comm.prefill_comm(1, self.args.max_prefill_tokens)
         print("{:<40} {:<10.2f}".format("Comm before MoE/FFN (us):", comm_t1 * 1e6))
         print("{:<40} {:<10.2f}".format("Comm after MoE/FFN (us):", comm_t2 * 1e6))
 
-        # TP all_reduce communication time
-        tp_comm_time = comm.tp_all_reduce(
-            self.args.max_prefill_tokens, self.args.tp_size
-        )
+        tp_comm_time = comm_t1 + comm_t2
         if self.args.tp_size > 1:
             print("{:<40} {:<10.2f}".format("TP all_reduce (us):", tp_comm_time * 1e6))
 
@@ -277,16 +273,14 @@ class HybridModel:
         comm = Comm(
             self.config,
             self.gpu,
-            self.args.world_size,
-            self.args.num_nodes,
-            self.args.enable_deepep,
+            self.args.tp_size,
+            self.args.device_type,
         )
         comm_t1, comm_t2 = comm.decode_comm(self.target_bs)
         print("{:<40} {:<10.2f}".format("Comm before MoE/FFN (us):", comm_t1 * 1e6))
         print("{:<40} {:<10.2f}".format("Comm after MoE/FFN (us):", comm_t2 * 1e6))
 
-        # TP all_reduce communication time
-        tp_comm_time = comm.tp_all_reduce(self.target_bs, self.args.tp_size)
+        tp_comm_time = comm_t1 + comm_t2
         if self.args.tp_size > 1:
             print("{:<40} {:<10.2f}".format("TP all_reduce (us):", tp_comm_time * 1e6))
 

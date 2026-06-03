@@ -1,5 +1,106 @@
+import csv
+import os
+
 from config.model_config import ModelConfig
 from hardware.gpu import GPU
+
+# Matches kernel_benchmark/collective_communication.py and bench_data/comm CSV "op" column.
+COLLECTIVE_OPS = ("all_reduce", "all_gather", "reduce_scatter")
+
+# (device_type, tp_size) -> CSV rows
+COMM_BENCH_DATA: dict[tuple[str, int], list[dict[str, str]]] = {}
+
+
+def repo_root() -> str:
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def load_comm_bench(device_type: str, tp_size: int) -> list[dict[str, str]]:
+    """Load bench_data/comm/<device>/ws<N>_data.csv (all columns, one dict per row)."""
+    key = (device_type.lower(), tp_size)
+    if key in COMM_BENCH_DATA:
+        return COMM_BENCH_DATA[key]
+
+    path = os.path.join(
+        repo_root(),
+        "bench_data",
+        "comm",
+        device_type.lower(),
+        f"ws{tp_size}_data.csv",
+    )
+    if not os.path.exists(path):
+        rows: list[dict[str, str]] = []
+    else:
+        with open(path, "r") as f:
+            rows = [
+                row
+                for row in csv.DictReader(f)
+                if int(row["world_size"]) == tp_size
+            ]
+
+    COMM_BENCH_DATA[key] = rows
+    return rows
+
+
+def find_nearest_comm_bench_row(
+    device_type: str,
+    tp_size: int,
+    op: str,
+    per_rank_bytes: int,
+) -> dict[str, str] | None:
+    """Bench row with num_bytes>=per_rank_bytes and smallest excess."""
+    if op not in COLLECTIVE_OPS:
+        raise ValueError(f"op must be one of {COLLECTIVE_OPS}, got {op!r}")
+
+    best_row = None
+    best_excess = None
+    best_latency_us = None
+    for row in load_comm_bench(device_type, tp_size):
+        if row["op"] != op:
+            continue
+        bench_bytes = int(row["num_bytes"])
+        if bench_bytes < per_rank_bytes:
+            continue
+        excess = bench_bytes - per_rank_bytes
+        latency_us = float(row["latency_us"])
+        if best_excess is None or excess < best_excess or (
+            excess == best_excess
+            and (best_latency_us is None or latency_us < best_latency_us)
+        ):
+            best_excess = excess
+            best_latency_us = latency_us
+            best_row = row
+    return best_row
+
+
+def collective_transfer_bytes(op: str, per_rank_bytes: int, tp_size: int) -> float:
+    """Bus traffic bytes (nccl-tests busbw model, see collective_communication.nccl_bandwidth)."""
+    n = tp_size
+    if op == "all_reduce":
+        return per_rank_bytes * 2 * (n - 1) / n
+    if op == "all_gather":
+        return per_rank_bytes * (n - 1)
+    if op == "reduce_scatter":
+        return per_rank_bytes * (n - 1) / n
+    raise ValueError(f"unsupported op: {op}")
+
+
+def estimate_collective_latency_us(
+    peak_bw: float,
+    op: str,
+    tp_size: int,
+    per_rank_bytes: int,
+    bench_row: dict[str, str],
+) -> float:
+    """Scale actual transfer by busbw_ratio from a nearby bench point vs peak link bw."""
+    busbw_ratio = float(bench_row["busbw_ratio"])
+    if busbw_ratio <= 0:
+        busbw_ratio = float(bench_row["busbw_gbps"]) / peak_bw
+
+    transfer_bytes = collective_transfer_bytes(op, per_rank_bytes, tp_size)
+    # busbw_ratio = measured_bus_bw / peak_bw (see collective_communication.py)
+    effective_bw = peak_bw * busbw_ratio
+    return transfer_bytes / effective_bw / 1e9 * 1e6
 
 
 class Comm:
@@ -7,101 +108,58 @@ class Comm:
         self,
         config: ModelConfig,
         gpu: GPU,
-        world_size: int,
-        num_nodes=1,
-        enable_deepep=False,
+        tp_size: int = 1,
+        device_type: str = "A100",
     ):
         self.config = config
         self.gpu = gpu
-        self.world_size = world_size
-        self.num_nodes = num_nodes
-        self.enable_deepep = enable_deepep
+        self.tp_size = tp_size
+        self.device_type = device_type
 
-    def size_bw_model(self, tensor_shape, use_fp8=False, inter_node=False):
-        if self.world_size <= 1:
-            return 0
-        size = 1 if use_fp8 else 2
-        for v in tensor_shape:
-            size *= v
-        if inter_node:
-            return size / (1024**3) / self.gpu.rdma_bw
-        return size / (1024**3) / self.gpu.nvlink_bw
+    def collective_latency_s(self, op: str, per_rank_bytes: int) -> float:
+        """Latency (seconds) for one collective; per_rank_bytes is send buffer per GPU."""
+        if self.tp_size <= 1:
+            return 0.0
 
-    def all_reduce(self, num_tokens):
-        tensor_shape = [num_tokens * self.world_size, self.config.hidden_size]
-        return self.size_bw_model(
-            tensor_shape, use_fp8=False, inter_node=(self.num_nodes > 1)
+        peak_bw = self.gpu.nvlink_bw
+        bench_row = find_nearest_comm_bench_row(
+            self.device_type, self.tp_size, op, per_rank_bytes
+        )
+        if bench_row is not None:
+            latency_us = estimate_collective_latency_us(
+                peak_bw, op, self.tp_size, per_rank_bytes, bench_row
+            )
+            return latency_us * 1e-6
+
+        print(
+            f"Warning: no comm bench row for op={op}, ws={self.tp_size}, "
+            f"per_rank_bytes={per_rank_bytes} "
+            f"(device={self.device_type}); use peak link bandwidth fallback"
+        )
+        transfer_bytes = collective_transfer_bytes(op, per_rank_bytes, self.tp_size)
+        return transfer_bytes / (1024**3) / peak_bw
+
+    def all_reduce_latency_s(self, per_rank_bytes: int) -> float:
+        return self.collective_latency_s("all_reduce", per_rank_bytes)
+    
+    def all_gather_latency_s(self, per_rank_bytes: int) -> float:
+        return self.collective_latency_s("all_gather", per_rank_bytes)
+
+    def prefill_comm(self, batch_size: int, seq_len: int):
+        """Return (comm after O_proj, comm after FFN down_proj) in seconds."""
+        if self.tp_size <= 1:
+            return 0.0, 0.0
+        per_rank_bytes = batch_size * seq_len * self.config.hidden_size * 2
+        return (
+            self.all_reduce_latency_s(per_rank_bytes),
+            self.all_reduce_latency_s(per_rank_bytes),
         )
 
-    def dispatch(self, num_tokens, mode="normal"):
-        if mode == "normal":
-            send_tokens = num_tokens * (self.num_nodes - 1)
-            tensor_shape1 = [send_tokens, self.config.hidden_size]
-            t1 = self.size_bw_model(tensor_shape1, use_fp8=True, inter_node=True)
-
-            tensor_shape2 = [num_tokens, self.config.hidden_size]
-            t2 = self.size_bw_model(tensor_shape2, use_fp8=True, inter_node=False)
-            return t1 + t2
-        else:
-            send_tokens = num_tokens * self.config.num_experts_per_tok
-            tensor_shape = [send_tokens, self.config.hidden_size]
-            return self.size_bw_model(
-                tensor_shape, use_fp8=True, inter_node=(self.num_nodes > 1)
-            )
-
-    def combine(self, num_tokens, mode="normal"):
-        if mode == "normal":
-            rcv_tokens = num_tokens * (self.num_nodes - 1)
-            tensor_shape1 = [rcv_tokens, self.config.hidden_size]
-            t1 = self.size_bw_model(tensor_shape1, use_fp8=False, inter_node=True)
-
-            tensor_shape2 = [num_tokens, self.config.hidden_size]
-            t2 = self.size_bw_model(tensor_shape2, use_fp8=False, inter_node=False)
-            return t1 + t2
-        else:
-            rcv_tokens = num_tokens * self.config.num_experts_per_tok
-            tensor_shape = [rcv_tokens, self.config.hidden_size]
-            return self.size_bw_model(
-                tensor_shape, use_fp8=False, inter_node=(self.num_nodes > 1)
-            )
-
-    def a2f(self, num_tokens):
-        tensor_shape = [num_tokens, self.config.hidden_size]
-        return self.size_bw_model(tensor_shape, use_fp8=True, inter_node=True)
-
-    def f2a(self, num_tokens):
-        tensor_shape = [num_tokens, self.config.hidden_size]
-        return self.size_bw_model(tensor_shape, use_fp8=False, inter_node=True)
-
-    def prefill_comm(self, num_tokens: int):
-        if self.enable_deepep:
-            return self.dispatch(num_tokens, "normal"), self.combine(
-                num_tokens, "normal"
-            )
-        return self.all_reduce(num_tokens), self.all_reduce(num_tokens)
-
-    def decode_comm(self, num_tokens: int):
-        if self.enable_deepep:
-            return self.dispatch(num_tokens, "low_latency"), self.combine(
-                num_tokens, "low_latency"
-            )
-        return self.all_reduce(num_tokens), self.all_reduce(num_tokens)
-
-    def tp_all_reduce(self, num_tokens: int, tp_size: int):
-        """Calculate TP all_reduce communication time.
-
-        TP all_reduce happens after attention and MoE computation within each TP group.
-        For TP=N, each GPU holds 1/N of the output and needs to all_reduce to get full result.
-        """
-        if tp_size <= 1:
-            return 0
-        # TP all_reduce: each GPU sends/receives (tp_size - 1) / tp_size of data
-        # Using ring all_reduce: 2 * (tp_size - 1) / tp_size of data transferred
-        tensor_shape = [num_tokens, self.config.hidden_size]
-        size = 2  # fp16/bf16 output
-        for v in tensor_shape:
-            size *= v
-        # Ring all_reduce: 2 * (N-1)/N data transfer
-        transfer_size = size * 2 * (tp_size - 1) / tp_size
-        # Use NVLink bandwidth for intra-node TP communication
-        return transfer_size / (1024**3) / self.gpu.nvlink_bw
+    def decode_comm(self, batch_size: int, seq_len: int = 1):
+        if self.tp_size <= 1:
+            return 0.0, 0.0
+        per_rank_bytes = batch_size * seq_len * self.config.hidden_size * 2
+        return (
+            self.all_reduce_latency_s(per_rank_bytes),
+            self.all_reduce_latency_s(per_rank_bytes),
+        )
