@@ -1,2 +1,35 @@
+# Python
 __pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.eggs/
+
+# Editor / OS
 *.un~
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Node.js (systolic_array Web UI)
+node_modules/
+
+# Frontend build artifacts (regenerate: npm run build)
+systolic_array/webui/frontend/dist/
+*.tsbuildinfo
+.vite/
+
+# Reference PDFs in doc/
+systolic_array/doc/
