@@ -179,19 +179,15 @@ def build_micro_store(
 
 
 def _macro_snapshot_to_dict(snapshot: CycleSnapshot) -> dict[str, Any]:
-    """Lightweight per-cycle snapshot (Logic Die / PPU views only, no PE grid)."""
+    """Lightweight per-cycle snapshot (Logic Die view; PPU grids fetched on demand)."""
     d: dict[str, Any] = {
         "cycle": snapshot.cycle,
         "phase": snapshot.phase,
         "progress": snapshot.progress,
         "memory": snapshot.memory,
     }
-    if snapshot.macro_arrays is not None:
-        d["macro_arrays"] = snapshot.macro_arrays
     if snapshot.die_ppuss is not None:
         d["die_ppuss"] = snapshot.die_ppuss
-    if snapshot.ppu_core_grids is not None:
-        d["ppu_core_grids"] = snapshot.ppu_core_grids
     return d
 
 

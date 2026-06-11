@@ -22,6 +22,8 @@ CORE_PE = 16
 
 OS_M_MAX = CORE_PE
 OS_N_MAX = DIE_PPU_COUNT * PPU_CORE_COUNT * CORE_PE  # 48 × 16 × 16 = 12288
+# OS: K streams through each core (no spatial K tiling); API upper bound only.
+OS_K_MAX = 65536
 
 
 @dataclass

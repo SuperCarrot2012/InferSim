@@ -55,6 +55,7 @@ interface Props {
   arrayRows: number
   arrayCols: number
   osMMax: number
+  osKMax: number
   osNMax: number
   wsMaxDim: number
   tilePlan?: TilePlan | null
@@ -81,7 +82,7 @@ function osTileHint(n: number, pe: number): string {
 }
 
 export function ConfigPanel({
-  m, k, n, dataflow, arrayRows, arrayCols, osMMax, osNMax, wsMaxDim, tilePlan, loading,
+  m, k, n, dataflow, arrayRows, arrayCols, osMMax, osKMax, osNMax, wsMaxDim, tilePlan, loading,
   onMChange, onKChange, onNChange, onDataflowChange, onRun,
 }: Props) {
   const isOS = dataflow === 'output_stationary'
@@ -108,7 +109,7 @@ export function ConfigPanel({
         </label>
         <label>
           K (内维)
-          <DimInput value={k} min={1} max={wsMaxDim} onChange={onKChange} />
+          <DimInput value={k} min={1} max={isOS ? osKMax : wsMaxDim} onChange={onKChange} />
         </label>
         <label>
           N (B 列数)
@@ -126,7 +127,7 @@ export function ConfigPanel({
         {isOS ? (
           <>
             <strong>OS 结构：</strong>Logic Die View → PPU View → Systolic Core View<br />
-            <strong>约束：</strong>M ∈ [1,{osMMax}]；N 优先切分，最大 {osNMax}<br />
+            <strong>约束：</strong>M ∈ [1,{osMMax}]；K ∈ [1,{osKMax.toLocaleString()}]（流式）；N 优先切分，最大 {osNMax.toLocaleString()}<br />
             <strong>分块：</strong>{osTileHint(n, arrayCols)}
             {tilePlan && (
               <>

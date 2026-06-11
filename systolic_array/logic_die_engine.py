@@ -12,11 +12,7 @@ from systolic_array.hierarchy import (
     LogicDiePlan,
     compute_os_logic_die_plan,
 )
-from systolic_array.types import CycleSnapshot, MacroArrayState, SimResult
-
-
-def _core_label(tile: CoreTile) -> str:
-    return f"M[0:{tile.local_m}]×N[{tile.n0}:{tile.n0 + tile.local_n}]"
+from systolic_array.types import CycleSnapshot, SimResult
 
 
 def _empty_die_grid() -> list[list[dict]]:
@@ -41,16 +37,6 @@ def _empty_die_grid() -> list[list[dict]]:
     return grid
 
 
-def _empty_ppu_core_grid() -> list[list[dict]]:
-    return [
-        [
-            MacroArrayState(active=False, grid_row=r, grid_col=c).to_dict()
-            for c in range(PPU_CORE_GRID)
-        ]
-        for r in range(PPU_CORE_GRID)
-    ]
-
-
 def _merge_os_snapshots(
     plan: LogicDiePlan,
     tile_cycles: dict[str, int],
@@ -61,83 +47,34 @@ def _merge_os_snapshots(
     max_cycles = max(tile_cycles.values())
     merged: list[CycleSnapshot] = []
 
+    ppu_active_cores: dict[int, int] = {}
+    for tile in plan.tiles:
+        ppu_active_cores[tile.ppu_index] = ppu_active_cores.get(tile.ppu_index, 0) + 1
+
     for cycle in range(max_cycles):
         die_ppuss = _empty_die_grid()
-        ppu_core_grids: dict[str, list[list[dict]]] = {
-            str(i): _empty_ppu_core_grid() for i in range(plan.active_ppu_count or 1)
-        }
-        for tile in plan.tiles:
-            ppu_core_grids.setdefault(str(tile.ppu_index), _empty_ppu_core_grid())
-
+        ppu_computing: dict[int, int] = {}
         any_computing = False
 
         for tile in plan.tiles:
-            ppu_key = str(tile.ppu_index)
-            cr, cc = tile.core_row, tile.core_col
-            label = _core_label(tile)
-            cycles = tile_cycles[tile.key]
-
-            if cycle < cycles:
+            if cycle < tile_cycles[tile.key]:
                 any_computing = True
-                ppu_core_grids[ppu_key][cr][cc] = MacroArrayState(
-                    active=True,
-                    computing=True,
-                    done=False,
-                    grid_row=cr,
-                    grid_col=cc,
-                    local_m=tile.local_m,
-                    local_k=tile.local_k,
-                    local_n=tile.local_n,
-                    m0=tile.m0,
-                    k0=tile.k0,
-                    n0=tile.n0,
-                    label=label,
-                ).to_dict()
-            else:
-                ppu_core_grids[ppu_key][cr][cc] = MacroArrayState(
-                    active=True,
-                    computing=False,
-                    done=True,
-                    grid_row=cr,
-                    grid_col=cc,
-                    local_m=tile.local_m,
-                    local_k=tile.local_k,
-                    local_n=tile.local_n,
-                    m0=tile.m0,
-                    k0=tile.k0,
-                    n0=tile.n0,
-                    label=label,
-                ).to_dict()
+                ppu_computing[tile.ppu_index] = ppu_computing.get(tile.ppu_index, 0) + 1
 
-        for ppu_index in {t.ppu_index for t in plan.tiles}:
+        for ppu_index, active_cores in ppu_active_cores.items():
             pr = ppu_index // DIE_PPU_COLS
             pc = ppu_index % DIE_PPU_COLS
-            grid = ppu_core_grids[str(ppu_index)]
-            ppu_computing = any(
-                grid[r][c].get("computing")
-                for r in range(PPU_CORE_GRID)
-                for c in range(PPU_CORE_GRID)
-                if grid[r][c].get("active")
-            )
-            active_cores = sum(
-                1
-                for r in range(PPU_CORE_GRID)
-                for c in range(PPU_CORE_GRID)
-                if grid[r][c].get("active")
-            )
+            computing_cores = ppu_computing.get(ppu_index, 0)
             die_ppuss[pr][pc] = {
                 "active": True,
-                "computing": ppu_computing,
-                "done": active_cores > 0 and not ppu_computing,
+                "computing": computing_cores > 0,
+                "done": active_cores > 0 and computing_cores == 0,
                 "ppu_index": ppu_index,
                 "ppu_row": pr,
                 "ppu_col": pc,
                 "active_cores": active_cores,
                 "label": f"PPU {ppu_index}",
             }
-
-        first_ppu = plan.tiles[0].ppu_index
-        macro = ppu_core_grids.get(str(first_ppu), _empty_ppu_core_grid())
 
         merged.append(
             CycleSnapshot(
@@ -154,9 +91,7 @@ def _merge_os_snapshots(
                     "active_ppu_count": plan.active_ppu_count,
                 },
                 memory={},
-                macro_arrays=macro,
                 die_ppuss=die_ppuss,
-                ppu_core_grids=ppu_core_grids,
             )
         )
 

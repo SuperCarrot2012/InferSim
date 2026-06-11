@@ -1,5 +1,42 @@
 import type { MacroArrayState, TilePlan } from './types'
 
+export const DIE_PPU_COUNT = 48
+export const PPU_CORE_COUNT = 16
+export const CORE_PE = 16
+const PE_PER_CORE = CORE_PE * CORE_PE
+
+export const TC_GRID = 4
+
+export interface LogicDieUtilStats {
+  utilization: number
+  actualMacs: number
+  capacityMacs: number
+  viewLabel: string
+}
+
+/** Actual MACs (M×K×N) / full hierarchy MAC slots over all simulation cycles. */
+export function computeHierarchyUtilization(
+  dims: { m: number; k: number; n: number },
+  totalCycles: number,
+  dataflow: string,
+): LogicDieUtilStats | null {
+  if (totalCycles <= 0) return null
+
+  const actualMacs = dims.m * dims.k * dims.n
+  const isOS = dataflow === 'output_stationary'
+  const capacityMacs = isOS
+    ? DIE_PPU_COUNT * PPU_CORE_COUNT * PE_PER_CORE * totalCycles
+    : TC_GRID * TC_GRID * PE_PER_CORE * totalCycles
+  const utilization = capacityMacs > 0 ? actualMacs / capacityMacs : 0
+
+  return {
+    utilization,
+    actualMacs,
+    capacityMacs,
+    viewLabel: isOS ? 'Logic Die View' : 'Tensor Core View',
+  }
+}
+
 export interface PpuViewStats {
   ppuIndex: number
   activeCores: number

@@ -1,6 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fetchAllSnapshots, fetchMicroSnapshot, fetchPpuMemory, runSimulation } from './api'
-import type { CycleSnapshot, DataflowType, MemoryAccess, MicroTileSnapshot, SimulateResponse } from './types'
+import {
+  fetchAllSnapshots,
+  fetchCoreMemoryPeak,
+  fetchMicroSnapshot,
+  fetchPpuCoreGrid,
+  fetchPpuMemory,
+  fetchPpuMemoryPeak,
+  runSimulation,
+} from './api'
+import type {
+  CycleSnapshot,
+  DataflowType,
+  MacroArrayState,
+  MemoryAccess,
+  MemoryPeakStats,
+  MicroTileSnapshot,
+  SimulateResponse,
+} from './types'
 import { ConfigPanel } from './components/ConfigPanel'
 import { ControlBar } from './components/ControlBar'
 import { Inspector } from './components/Inspector'
@@ -10,12 +26,11 @@ import { PEGrid } from './components/PEGrid'
 import { deriveMemoryAccess } from './memory'
 import { emptySnapshot } from './emptySnapshot'
 import {
+  computeHierarchyUtilization,
   coreTileKey,
   findTileByKey,
   firstActiveArray,
-  firstActiveCore,
   firstActivePpu,
-  ppuCoresGrid,
   ppuIndexFromDie,
   summarizePpuView,
   tileCycleCount,
@@ -25,6 +40,7 @@ import './App.css'
 const ARRAY_ROWS = 16
 const ARRAY_COLS = 16
 const OS_M_MAX = 16
+const OS_K_MAX = 65536
 const OS_N_MAX = 48 * 16 * 16
 const WS_MAX_DIM = 64
 const EMPTY_GRID = emptySnapshot(ARRAY_ROWS, ARRAY_COLS)
@@ -69,10 +85,16 @@ export default function App() {
   const [microSnap, setMicroSnap] = useState<CycleSnapshot | null>(null)
   const [microClamped, setMicroClamped] = useState(false)
   const [ppuMemory, setPpuMemory] = useState<(MemoryAccess & { contributing_cores: number }) | null>(null)
+  const [coreMemoryPeak, setCoreMemoryPeak] = useState<MemoryPeakStats | null>(null)
+  const [ppuMemoryPeak, setPpuMemoryPeak] = useState<MemoryPeakStats | null>(null)
+  const [ppuCores, setPpuCores] = useState<MacroArrayState[][] | null>(null)
   const [started, setStarted] = useState(false)
   const playRef = useRef<number | null>(null)
   const microCache = useRef<Map<string, MicroTileSnapshot>>(new Map())
+  const ppuGridCache = useRef<Map<string, MacroArrayState[][]>>(new Map())
   const ppuMemoryCache = useRef<Map<string, MemoryAccess & { contributing_cores: number }>>(new Map())
+  const coreMemoryPeakCache = useRef<Map<string, MemoryPeakStats>>(new Map())
+  const ppuMemoryPeakCache = useRef<Map<string, MemoryPeakStats>>(new Map())
 
   const isOS = dataflow === 'output_stationary'
 
@@ -89,8 +111,14 @@ export default function App() {
     setFocusedArray(null)
     setMicroSnap(null)
     setPpuMemory(null)
+    setCoreMemoryPeak(null)
+    setPpuMemoryPeak(null)
+    setPpuCores(null)
     microCache.current.clear()
+    ppuGridCache.current.clear()
     ppuMemoryCache.current.clear()
+    coreMemoryPeakCache.current.clear()
+    ppuMemoryPeakCache.current.clear()
     setFrameIndex(0)
 
     try {
@@ -101,10 +129,13 @@ export default function App() {
 
       if (dataflow === 'output_stationary') {
         const ppu = firstActivePpu(snaps[0]?.die_ppuss)
-        const cores = ppu ? ppuCoresGrid(snaps[0], ppu.index) : null
-        const core = firstActiveCore(cores)
         setFocusedPpu(ppu)
-        setFocusedCore(core)
+        if (ppu && res.tile_plan?.tiles?.length) {
+          const tile = res.tile_plan.tiles.find((t) => t.ppu_index === ppu.index) ?? res.tile_plan.tiles[0]
+          if (tile.core_row != null && tile.core_col != null) {
+            setFocusedCore({ row: tile.core_row, col: tile.core_col })
+          }
+        }
       } else {
         const arr = firstActiveArray(snaps[0]?.macro_arrays)
         setFocusedArray(arr)
@@ -192,6 +223,35 @@ export default function App() {
 
   useEffect(() => {
     if (!response?.sim_id || !snap || !started || !isOS || !focusedPpu) {
+      setPpuCores(null)
+      return
+    }
+
+    const cacheKey = `${response.sim_id}:${focusedPpu.index}:${snap.cycle}`
+    const cached = ppuGridCache.current.get(cacheKey)
+    if (cached) {
+      setPpuCores(cached)
+      return
+    }
+
+    let cancelled = false
+    fetchPpuCoreGrid(response.sim_id, snap.cycle, focusedPpu.index)
+      .then((cores) => {
+        if (cancelled) return
+        ppuGridCache.current.set(cacheKey, cores)
+        setPpuCores(cores)
+      })
+      .catch(() => {
+        if (!cancelled) setPpuCores(null)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [response?.sim_id, snap, frameIndex, isOS, focusedPpu, started])
+
+  useEffect(() => {
+    if (!response?.sim_id || !snap || !started || !isOS || !focusedPpu) {
       setPpuMemory(null)
       return
     }
@@ -219,14 +279,91 @@ export default function App() {
     }
   }, [response?.sim_id, snap, frameIndex, isOS, focusedPpu, started])
 
+  useEffect(() => {
+    if (!response?.sim_id || !started) {
+      setCoreMemoryPeak(null)
+      return
+    }
+
+    let tileKey: string | null = null
+    if (isOS) {
+      if (!focusedPpu || !focusedCore) {
+        setCoreMemoryPeak(null)
+        return
+      }
+      tileKey = coreTileKey(focusedPpu.index, focusedCore)
+    } else {
+      if (!focusedArray) {
+        setCoreMemoryPeak(null)
+        return
+      }
+      tileKey = `${focusedArray.row},${focusedArray.col}`
+    }
+
+    const cacheKey = `${response.sim_id}:${tileKey}`
+    const cached = coreMemoryPeakCache.current.get(cacheKey)
+    if (cached) {
+      setCoreMemoryPeak(cached)
+      return
+    }
+
+    let cancelled = false
+    fetchCoreMemoryPeak(response.sim_id, tileKey)
+      .then((peak) => {
+        if (cancelled) return
+        coreMemoryPeakCache.current.set(cacheKey, peak)
+        setCoreMemoryPeak(peak)
+      })
+      .catch(() => {
+        if (!cancelled) setCoreMemoryPeak(null)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [response?.sim_id, isOS, focusedPpu, focusedCore, focusedArray, started])
+
+  useEffect(() => {
+    if (!response?.sim_id || !started || !isOS || !focusedPpu) {
+      setPpuMemoryPeak(null)
+      return
+    }
+
+    const cacheKey = `${response.sim_id}:${focusedPpu.index}`
+    const cached = ppuMemoryPeakCache.current.get(cacheKey)
+    if (cached) {
+      setPpuMemoryPeak(cached)
+      return
+    }
+
+    let cancelled = false
+    fetchPpuMemoryPeak(response.sim_id, focusedPpu.index)
+      .then((peak) => {
+        if (cancelled) return
+        ppuMemoryPeakCache.current.set(cacheKey, peak)
+        setPpuMemoryPeak(peak)
+      })
+      .catch(() => {
+        if (!cancelled) setPpuMemoryPeak(null)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [response?.sim_id, isOS, focusedPpu, started])
+
   const maxCycle = snapshots.length > 0 ? snapshots[snapshots.length - 1].cycle : 0
   const totalCycles = response?.total_cycles ?? snapshots.length
   const simDataflow = (response?.config?.dataflow as string) ?? 'output_stationary'
   const tilePlan = response?.tile_plan
 
-  const ppuCores = isOS && focusedPpu ? ppuCoresGrid(snap, focusedPpu.index) : snap?.macro_arrays
+  const ppuCoresForView = isOS ? ppuCores : snap?.macro_arrays
   const ppuViewStats = isOS && focusedPpu
-    ? summarizePpuView(focusedPpu.index, ppuCores, focusedCore, tilePlan)
+    ? summarizePpuView(focusedPpu.index, ppuCoresForView, focusedCore, tilePlan)
+    : null
+
+  const logicDieUtil = response?.dims
+    ? computeHierarchyUtilization(response.dims, totalCycles, simDataflow)
     : null
 
   const selectedPE =
@@ -262,7 +399,7 @@ export default function App() {
           <ConfigPanel
             m={m} k={k} n={n} dataflow={dataflow}
             arrayRows={ARRAY_ROWS} arrayCols={ARRAY_COLS}
-            osMMax={OS_M_MAX} osNMax={OS_N_MAX} wsMaxDim={WS_MAX_DIM}
+            osMMax={OS_M_MAX} osKMax={OS_K_MAX} osNMax={OS_N_MAX} wsMaxDim={WS_MAX_DIM}
             tilePlan={tilePlan}
             loading={loading}
             onMChange={setM}
@@ -310,8 +447,12 @@ export default function App() {
                       onSelect={(r, c) => {
                         const idx = ppuIndexFromDie(r, c)
                         setFocusedPpu({ row: r, col: c, index: idx })
-                        const cores = ppuCoresGrid(snap, idx)
-                        setFocusedCore(firstActiveCore(cores))
+                        const tile = tilePlan?.tiles?.find((t) => t.ppu_index === idx)
+                        if (tile?.core_row != null && tile.core_col != null) {
+                          setFocusedCore({ row: tile.core_row, col: tile.core_col })
+                        } else {
+                          setFocusedCore(null)
+                        }
                         setSelected(null)
                       }}
                     />
@@ -325,7 +466,7 @@ export default function App() {
                       )}
                     </div>
                     <MacroGrid
-                      macro={ppuCores}
+                      macro={ppuCoresForView}
                       selected={focusedCore}
                       title="PPU View · 4×4 Core"
                       onSelect={(r, c) => {
@@ -408,8 +549,11 @@ export default function App() {
               phase={microSnap.phase}
               dataflow={simDataflow}
               memory={deriveMemoryAccess(microSnap)}
+              memoryPeak={coreMemoryPeak}
               ppuView={ppuViewStats}
               ppuMemory={ppuMemory}
+              ppuMemoryPeak={ppuMemoryPeak}
+              logicDieUtil={logicDieUtil}
               coreViewContext={coreViewContext}
             />
           )}

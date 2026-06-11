@@ -25,6 +25,58 @@ def empty_memory_access(
     }
 
 
+def peak_memory_access(
+    memories: list[dict[str, int | str | dict[str, int]]],
+) -> dict[str, int | str | dict[str, int]]:
+    """Peak bandwidth = max over cycles of (read_bytes + write_bytes)."""
+    if not memories:
+        return {
+            "dtype": DEFAULT_DTYPE,
+            "bytes_per_elem": FP16_BYTES,
+            "peak_bytes": 0,
+            "peak_cycle": 0,
+            "read_bytes": 0,
+            "write_bytes": 0,
+            "read_breakdown": {"weight": 0, "activation": 0},
+            "write_breakdown": {"output": 0},
+        }
+
+    dtype = str(memories[0].get("dtype", DEFAULT_DTYPE))
+    bytes_per_elem = int(memories[0].get("bytes_per_elem", FP16_BYTES))
+
+    peak_bytes = -1
+    peak_cycle = 0
+    peak_mem = memories[0]
+
+    for cycle, mem in enumerate(memories):
+        total_bytes = int(mem.get("read_bytes", 0)) + int(mem.get("write_bytes", 0))
+        if total_bytes > peak_bytes:
+            peak_bytes = total_bytes
+            peak_cycle = cycle
+            peak_mem = mem
+
+    rb = peak_mem.get("read_breakdown", {})
+    wb = peak_mem.get("write_breakdown", {})
+    if not isinstance(rb, dict):
+        rb = {}
+    if not isinstance(wb, dict):
+        wb = {}
+
+    return {
+        "dtype": dtype,
+        "bytes_per_elem": bytes_per_elem,
+        "peak_bytes": peak_bytes,
+        "peak_cycle": peak_cycle,
+        "read_bytes": int(peak_mem.get("read_bytes", 0)),
+        "write_bytes": int(peak_mem.get("write_bytes", 0)),
+        "read_breakdown": {
+            "weight": int(rb.get("weight", 0)),
+            "activation": int(rb.get("activation", 0)),
+        },
+        "write_breakdown": {"output": int(wb.get("output", 0))},
+    }
+
+
 def merge_memory_access(
     left: dict[str, int | str | dict[str, int]],
     right: dict[str, int | str | dict[str, int]],
@@ -83,6 +135,41 @@ def os_writeback_count(m: int, k: int, n: int, local_cycle: int) -> int:
         if 0 <= c < n:
             count += 1
     return count
+
+
+def os_memory_at_cycle(
+    m: int,
+    k: int,
+    n: int,
+    local_cycle: int,
+    *,
+    m0: int = 0,
+    k0: int = 0,
+    n0: int = 0,
+) -> dict[str, int | str | dict[str, int]]:
+    """Analytical per-cycle OS memory traffic (no micro re-simulation)."""
+    left_labels: list[str | None] = []
+    for r in range(m):
+        k_idx = local_cycle - r
+        left_labels.append(
+            f"A[{r + m0},{k_idx + k0}]" if 0 <= k_idx < k else None
+        )
+    top_labels: list[str | None] = []
+    for c in range(n):
+        k_idx = local_cycle - c
+        top_labels.append(
+            f"W[{k_idx + k0},{c + n0}]" if 0 <= k_idx < k else None
+        )
+    return compute_memory_access(
+        phase=SimPhase.COMPUTE,
+        dataflow=DataflowType.OUTPUT_STATIONARY,
+        m=m,
+        k=k,
+        n=n,
+        left_labels=left_labels,
+        top_labels=top_labels,
+        local_cycle=local_cycle,
+    )
 
 
 def compute_memory_access(

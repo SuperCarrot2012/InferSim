@@ -118,6 +118,17 @@ export interface MemoryAccess {
   write_breakdown: { output: number }
 }
 
+export interface MemoryPeakStats {
+  dtype: string
+  bytes_per_elem: number
+  peak_bytes: number
+  peak_cycle: number
+  read_bytes: number
+  write_bytes: number
+  read_breakdown: { weight: number; activation: number }
+  write_breakdown: { output: number }
+}
+
 export interface SimulateResponse {
   sim_id: string
   total_cycles: number

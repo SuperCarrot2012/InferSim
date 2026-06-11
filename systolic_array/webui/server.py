@@ -11,7 +11,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from systolic_array.simulator import aggregate_ppu_memory, render_micro_snapshot, run_simulation
+from systolic_array.hierarchy import OS_K_MAX, OS_M_MAX, OS_N_MAX
+from systolic_array.simulator import (
+    aggregate_ppu_memory,
+    peak_core_memory,
+    peak_ppu_memory,
+    render_micro_snapshot,
+    render_ppu_core_grid,
+    run_simulation,
+)
 from systolic_array.types import (
     DataflowType,
     SimResult,
@@ -31,12 +39,15 @@ app.add_middleware(
 _sim_cache: dict[str, SimResult] = {}
 _macro_cache: dict[str, list[dict[str, Any]]] = {}
 _micro_cache: dict[str, dict[str, Any]] = {}
+_peak_core_cache: dict[str, dict[str, Any]] = {}
+_peak_ppu_cache: dict[str, dict[str, Any]] = {}
+_ppu_grid_cache: dict[str, list[dict[str, Any]]] = {}
 
 
 class SimulateRequest(BaseModel):
     m: int = Field(ge=1, le=64)
-    k: int = Field(ge=1, le=64)
-    n: int = Field(ge=1, le=12288)
+    k: int = Field(ge=1, le=OS_K_MAX)
+    n: int = Field(ge=1, le=OS_N_MAX)
     rows: int = Field(default=16, ge=1, le=64)
     cols: int = Field(default=16, ge=1, le=64)
     dataflow: str = Field(default="output_stationary")
@@ -63,6 +74,18 @@ def simulate(req: SimulateRequest) -> SimulateResponse:
         flow = DataflowType(req.dataflow)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Unknown dataflow: {req.dataflow}") from exc
+
+    if flow == DataflowType.OUTPUT_STATIONARY:
+        if req.m > OS_M_MAX:
+            raise HTTPException(
+                status_code=400,
+                detail=f"OS mode: M must be in [1, {OS_M_MAX}], got M={req.m}",
+            )
+    elif flow == DataflowType.WEIGHT_STATIONARY and req.k > 64:
+        raise HTTPException(
+            status_code=400,
+            detail="WS mode: K must be <= 64 (4×4 Tensor Core × 16-row tiles)",
+        )
 
     try:
         result = run_simulation(
@@ -119,6 +142,29 @@ def get_snapshots(sim_id: str, from_cycle: int = 0, to_cycle: int | None = None)
     return {"snapshots": snapshots[from_cycle : end + 1], "total": len(snapshots)}
 
 
+@app.get("/api/simulate/{sim_id}/ppu_grid/{cycle}")
+def get_ppu_grid(sim_id: str, cycle: int, ppu_index: int) -> dict[str, Any]:
+    """On-demand 4×4 core grid for one PPU at a global cycle."""
+    result = _sim_cache.get(sim_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+    if cycle < 0 or cycle >= result.total_cycles:
+        raise HTTPException(status_code=404, detail=f"Cycle {cycle} out of range")
+
+    cache_key = f"{sim_id}:{ppu_index}:{cycle}"
+    if cache_key not in _ppu_grid_cache:
+        try:
+            _ppu_grid_cache[cache_key] = render_ppu_core_grid(result, ppu_index, cycle)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return {
+        "cycle": cycle,
+        "ppu_index": ppu_index,
+        "cores": _ppu_grid_cache[cache_key],
+    }
+
+
 @app.get("/api/simulate/{sim_id}/micro/{cycle}")
 def get_micro_snapshot(sim_id: str, cycle: int, tile_key: str) -> dict[str, Any]:
     """On-demand Systolic Core View snapshot for one tile at a given cycle.
@@ -162,6 +208,40 @@ def get_ppu_memory(sim_id: str, cycle: int, ppu_index: int) -> dict[str, Any]:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"cycle": cycle, "ppu_index": ppu_index, "memory": memory}
+
+
+@app.get("/api/simulate/{sim_id}/core_memory_peak")
+def get_core_memory_peak(sim_id: str, tile_key: str) -> dict[str, Any]:
+    """Peak per-cycle memory bandwidth for one systolic core tile."""
+    result = _sim_cache.get(sim_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+
+    cache_key = f"{sim_id}:{tile_key}"
+    if cache_key not in _peak_core_cache:
+        try:
+            _peak_core_cache[cache_key] = peak_core_memory(result, tile_key)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"Tile {tile_key} not found") from exc
+
+    return {"tile_key": tile_key, "peak": _peak_core_cache[cache_key]}
+
+
+@app.get("/api/simulate/{sim_id}/ppu_memory_peak")
+def get_ppu_memory_peak(sim_id: str, ppu_index: int) -> dict[str, Any]:
+    """Peak per-cycle aggregated memory bandwidth across one PPU."""
+    result = _sim_cache.get(sim_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+
+    cache_key = f"{sim_id}:{ppu_index}"
+    if cache_key not in _peak_ppu_cache:
+        try:
+            _peak_ppu_cache[cache_key] = peak_ppu_memory(result, ppu_index)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return {"ppu_index": ppu_index, "peak": _peak_ppu_cache[cache_key]}
 
 
 @app.get("/api/simulate/{sim_id}/meta")

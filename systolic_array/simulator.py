@@ -8,9 +8,10 @@ from systolic_array.config import ArrayConfig
 from systolic_array.cycles import compute_cycle_count
 from systolic_array.engine import CycleEngine
 from systolic_array.logic_die_engine import LogicDieEngine
-from systolic_array.memory import empty_memory_access, merge_memory_access
+from systolic_array.hierarchy import PPU_CORE_GRID
+from systolic_array.memory import empty_memory_access, merge_memory_access, os_memory_at_cycle, peak_memory_access
 from systolic_array.tensor_core_engine import TensorCoreEngine
-from systolic_array.types import CycleSnapshot, DataflowType, SimResult
+from systolic_array.types import CycleSnapshot, DataflowType, MacroArrayState, SimResult
 
 
 def run_simulation(
@@ -100,6 +101,70 @@ def render_micro_snapshot(
     )
 
 
+def _os_core_label(tile: dict[str, Any]) -> str:
+    return (
+        f"M[{tile['m0']}:{tile['m0'] + tile['local_m']}]"
+        f"×N[{tile['n0']}:{tile['n0'] + tile['local_n']}]"
+    )
+
+
+def _tile_memory_at_cycle(result: SimResult, tile: dict[str, Any], cycle: int) -> dict[str, object]:
+    dataflow = DataflowType(result.config.get("dataflow", DataflowType.OUTPUT_STATIONARY.value))
+    if dataflow == DataflowType.OUTPUT_STATIONARY:
+        return os_memory_at_cycle(
+            tile["local_m"],
+            tile["local_k"],
+            tile["local_n"],
+            cycle,
+            m0=tile["m0"],
+            k0=tile["k0"],
+            n0=tile["n0"],
+        )
+    tile_key = _tile_key_from_dict(tile)
+    snap = render_micro_snapshot(result, tile_key, cycle)
+    return snap.memory or empty_memory_access()
+
+
+def render_ppu_core_grid(
+    result: SimResult,
+    ppu_index: int,
+    cycle: int,
+) -> list[list[dict[str, object]]]:
+    """Synthesize one PPU's 4×4 core grid at a global cycle (no bulk snapshot storage)."""
+    grid: list[list[dict[str, object]]] = [
+        [
+            MacroArrayState(active=False, grid_row=r, grid_col=c).to_dict()
+            for c in range(PPU_CORE_GRID)
+        ]
+        for r in range(PPU_CORE_GRID)
+    ]
+
+    for tile in result.tile_plan.get("tiles", []):
+        if tile.get("ppu_index") != ppu_index:
+            continue
+        cr, cc = tile["core_row"], tile["core_col"]
+        tile_cycles = compute_cycle_count(
+            tile["local_m"], tile["local_k"], tile["local_n"]
+        )
+        computing = cycle < tile_cycles
+        grid[cr][cc] = MacroArrayState(
+            active=True,
+            computing=computing,
+            done=not computing,
+            grid_row=cr,
+            grid_col=cc,
+            local_m=tile["local_m"],
+            local_k=tile["local_k"],
+            local_n=tile["local_n"],
+            m0=tile["m0"],
+            k0=tile["k0"],
+            n0=tile["n0"],
+            label=_os_core_label(tile),
+        ).to_dict()
+
+    return grid
+
+
 def aggregate_ppu_memory(
     result: SimResult,
     ppu_index: int,
@@ -124,9 +189,7 @@ def aggregate_ppu_memory(
         if cycle >= tile_cycles:
             continue
 
-        tile_key = _tile_key_from_dict(tile)
-        snap = render_micro_snapshot(result, tile_key, cycle)
-        mem = snap.memory or empty_memory_access()
+        mem = _tile_memory_at_cycle(result, tile, cycle)
         total = mem if total is None else merge_memory_access(total, mem)
         contributing += 1
 
@@ -134,3 +197,22 @@ def aggregate_ppu_memory(
         total = empty_memory_access()
 
     return {**total, "contributing_cores": contributing}
+
+
+def peak_core_memory(result: SimResult, tile_key: str) -> dict[str, object]:
+    """Peak per-cycle memory bandwidth for one systolic core tile."""
+    tile = _find_tile(result.tile_plan, tile_key)
+    total = compute_cycle_count(tile["local_m"], tile["local_k"], tile["local_n"])
+    memories: list[dict[str, object]] = []
+    for cycle in range(total):
+        memories.append(_tile_memory_at_cycle(result, tile, cycle))
+    return peak_memory_access(memories)
+
+
+def peak_ppu_memory(result: SimResult, ppu_index: int) -> dict[str, object]:
+    """Peak per-cycle aggregated memory bandwidth across one PPU."""
+    memories: list[dict[str, object]] = []
+    for cycle in range(result.total_cycles):
+        mem = aggregate_ppu_memory(result, ppu_index, cycle)
+        memories.append(mem)
+    return peak_memory_access(memories)

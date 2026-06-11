@@ -1,20 +1,34 @@
 import type { PESnapshot } from '../types'
 import { coordLabel } from '../api'
-import type { MemoryAccess } from '../types'
+import type { MemoryAccess, MemoryPeakStats } from '../types'
 import { formatBytesPerCycle } from '../memory'
-import type { PpuViewStats } from '../microSnapshot'
+import type { LogicDieUtilStats, PpuViewStats } from '../microSnapshot'
 
 interface Props {
   pe: PESnapshot | null
   phase: string
   dataflow: string
   memory: MemoryAccess
+  memoryPeak?: MemoryPeakStats | null
   ppuView?: PpuViewStats | null
   ppuMemory?: (MemoryAccess & { contributing_cores?: number }) | null
+  ppuMemoryPeak?: MemoryPeakStats | null
+  logicDieUtil?: LogicDieUtilStats | null
   coreViewContext?: string
 }
 
-export function Inspector({ pe, phase, dataflow, memory, ppuView, ppuMemory, coreViewContext }: Props) {
+export function Inspector({
+  pe,
+  phase,
+  dataflow,
+  memory,
+  memoryPeak,
+  ppuView,
+  ppuMemory,
+  ppuMemoryPeak,
+  logicDieUtil,
+  coreViewContext,
+}: Props) {
   const phaseLabel: Record<string, string> = {
     weight_load: '权重加载',
     compute: '矩阵计算',
@@ -25,6 +39,21 @@ export function Inspector({ pe, phase, dataflow, memory, ppuView, ppuMemory, cor
   return (
     <div className="inspector">
       <h3>状态检查器</h3>
+
+      {logicDieUtil && (
+        <div className="inspector-section logic-die-view-panel">
+          <h4>{logicDieUtil.viewLabel}</h4>
+          <div className="stat-row">
+            <span className="label">利用率</span>
+            <span className="value mono logic-die-util">
+              {(logicDieUtil.utilization * 100).toFixed(2)}%
+            </span>
+          </div>
+          <p className="logic-die-util-detail mono">
+            {logicDieUtil.actualMacs.toLocaleString()} / {logicDieUtil.capacityMacs.toLocaleString()} MAC
+          </p>
+        </div>
+      )}
 
       {ppuView && (
         <div className="inspector-section ppu-view-panel">
@@ -82,7 +111,7 @@ export function Inspector({ pe, phase, dataflow, memory, ppuView, ppuMemory, cor
           {ppuMemory && (
             <>
               <div className="ppu-view-divider" />
-              <MemoryStatsPanel memory={ppuMemory} />
+              <MemoryStatsPanel memory={ppuMemory} peak={ppuMemoryPeak} />
             </>
           )}
         </div>
@@ -99,7 +128,7 @@ export function Inspector({ pe, phase, dataflow, memory, ppuView, ppuMemory, cor
           <span className={`badge phase-${phase}`}>{phaseLabel[phase] ?? phase}</span>
         </div>
 
-        <MemoryStatsPanel memory={memory} />
+        <MemoryStatsPanel memory={memory} peak={memoryPeak} />
 
         {pe ? (
           <div className="pe-detail">
@@ -133,15 +162,18 @@ export function Inspector({ pe, phase, dataflow, memory, ppuView, ppuMemory, cor
 
 function MemoryStatsPanel({
   memory,
+  peak,
   note,
 }: {
   memory: MemoryAccess
+  peak?: MemoryPeakStats | null
   note?: string
 }) {
   return (
     <div className="memory-subpanel">
       <h5>访存需求{note ? ` · ${note}` : ''}</h5>
       <div className="memory-dtype mono">{memory.dtype.toUpperCase()} · {memory.bytes_per_elem} B/elem</div>
+      <div className="memory-section-label">当前 Cycle</div>
       <div className="memory-stat">
         <div className="memory-stat-label">读取</div>
         <div className="memory-stat-value mono read">{formatBytesPerCycle(memory.read_bytes)}</div>
@@ -166,6 +198,29 @@ function MemoryStatsPanel({
           )}
         </div>
       </div>
+
+      {peak && (
+        <>
+          <div className="memory-peak-divider" />
+          <div className="memory-section-label">峰值带宽</div>
+          <div className="memory-stat">
+            <div className="memory-stat-value mono peak-total">{formatBytesPerCycle(peak.peak_bytes)}</div>
+            <div className="memory-peak-cycle mono">@ cycle {peak.peak_cycle}</div>
+            <div className="memory-breakdown">
+              {peak.read_breakdown.weight > 0 && (
+                <span>W {formatBytesPerCycle(peak.read_breakdown.weight)}</span>
+              )}
+              {peak.read_breakdown.activation > 0 && (
+                <span>A {formatBytesPerCycle(peak.read_breakdown.activation)}</span>
+              )}
+              {peak.write_breakdown.output > 0 && (
+                <span>C {formatBytesPerCycle(peak.write_breakdown.output)}</span>
+              )}
+              {peak.peak_bytes === 0 && <span>—</span>}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }

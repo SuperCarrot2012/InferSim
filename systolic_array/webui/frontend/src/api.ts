@@ -1,4 +1,12 @@
-import type { CycleSnapshot, DataflowType, MemoryAccess, MicroTileSnapshot, SimulateResponse } from './types'
+import type {
+  CycleSnapshot,
+  DataflowType,
+  MacroArrayState,
+  MemoryAccess,
+  MemoryPeakStats,
+  MicroTileSnapshot,
+  SimulateResponse,
+} from './types'
 
 const API = '/api'
 
@@ -29,6 +37,19 @@ export async function fetchAllSnapshots(simId: string): Promise<CycleSnapshot[]>
   return data.snapshots
 }
 
+export async function fetchPpuCoreGrid(
+  simId: string,
+  cycle: number,
+  ppuIndex: number,
+): Promise<MacroArrayState[][]> {
+  const res = await fetch(
+    `${API}/simulate/${simId}/ppu_grid/${cycle}?ppu_index=${ppuIndex}`,
+  )
+  if (!res.ok) throw new Error('Failed to load PPU core grid')
+  const data = await res.json()
+  return data.cores
+}
+
 export async function fetchMicroSnapshot(
   simId: string,
   cycle: number,
@@ -53,6 +74,28 @@ export async function fetchPpuMemory(
   if (!res.ok) throw new Error('Failed to load PPU memory stats')
   const data = await res.json()
   return data.memory
+}
+
+export async function fetchCoreMemoryPeak(
+  simId: string,
+  tileKey: string,
+): Promise<MemoryPeakStats> {
+  const res = await fetch(
+    `${API}/simulate/${simId}/core_memory_peak?tile_key=${encodeURIComponent(tileKey)}`,
+  )
+  if (!res.ok) throw new Error('Failed to load core memory peak')
+  const data = await res.json()
+  return data.peak
+}
+
+export async function fetchPpuMemoryPeak(
+  simId: string,
+  ppuIndex: number,
+): Promise<MemoryPeakStats> {
+  const res = await fetch(`${API}/simulate/${simId}/ppu_memory_peak?ppu_index=${ppuIndex}`)
+  if (!res.ok) throw new Error('Failed to load PPU memory peak')
+  const data = await res.json()
+  return data.peak
 }
 
 export function coordLabel(prefix: string, coord: [number, number] | null): string {

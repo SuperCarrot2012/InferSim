@@ -500,6 +500,36 @@ button.primary.full {
 .phase-compute { background: rgba(34, 211, 238, 0.15); color: var(--accent); }
 .phase-drain { background: rgba(251, 191, 36, 0.15); color: var(--warning); }
 
+.logic-die-view-panel {
+  background: var(--bg);
+  border: 1px solid rgba(167, 139, 250, 0.28);
+  border-radius: 10px;
+  padding: 0.75rem;
+}
+
+.logic-die-view-panel h4 {
+  font-size: 0.85rem;
+  margin-bottom: 0.45rem;
+  color: var(--accent2);
+}
+
+.logic-die-view-panel .stat-row:last-of-type {
+  border-bottom: none;
+}
+
+.logic-die-util {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--accent2);
+}
+
+.logic-die-util-detail {
+  margin: 0.35rem 0 0;
+  font-size: 0.68rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
 .ppu-view-panel {
   background: var(--bg);
   border: 1px solid rgba(34, 211, 238, 0.28);
@@ -591,6 +621,29 @@ button.primary.full {
   font-size: 0.72rem;
   color: var(--muted);
   margin-bottom: 0.6rem;
+}
+
+.memory-section-label {
+  font-size: 0.68rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.35rem;
+}
+
+.memory-peak-divider {
+  margin: 0.65rem 0 0.5rem;
+  border-top: 1px dashed rgba(42, 53, 72, 0.7);
+}
+
+.memory-peak-cycle {
+  margin-top: 0.2rem;
+  font-size: 0.65rem;
+  color: var(--muted);
+}
+
+.memory-stat-value.peak-total {
+  color: #e2e8f0;
 }
 
 .memory-stat + .memory-stat {
