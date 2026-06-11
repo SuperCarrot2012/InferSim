@@ -37,3 +37,13 @@ class ArrayConfig:
             "mac_latency": self.mac_latency,
             "weight_load_cycles": self.weight_load_cycles,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> ArrayConfig:
+        return cls(
+            rows=data["rows"],
+            cols=data["cols"],
+            dataflow=DataflowType(data["dataflow"]),
+            mac_latency=data.get("mac_latency", 1),
+            weight_load_cycles=data.get("weight_load_cycles", 1),
+        )

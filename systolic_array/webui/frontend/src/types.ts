@@ -1,5 +1,42 @@
 export type DataflowType = 'output_stationary' | 'weight_stationary'
 
+export interface DiePpuState {
+  active: boolean
+  computing: boolean
+  done: boolean
+  ppu_index: number
+  ppu_row: number
+  ppu_col: number
+  active_cores: number
+  label: string
+}
+
+export interface MacroArrayState {
+  active: boolean
+  computing: boolean
+  done: boolean
+  grid_row: number
+  grid_col: number
+  local_m: number
+  local_k: number
+  local_n: number
+  m0: number
+  k0: number
+  n0: number
+  label: string
+}
+
+export interface MicroTileSnapshot {
+  phase: string
+  pes: PESnapshot[][]
+  left_inject: (string | null)[]
+  top_inject?: (string | null)[]
+  bottom_output: (string | null)[]
+  active_links: LinkAnim[]
+  progress: Record<string, number | string>
+  memory?: MemoryAccess
+}
+
 export interface PESnapshot {
   row: number
   col: number
@@ -23,6 +60,7 @@ export interface LinkAnim {
   direction: 'right' | 'down'
 }
 
+/** Macro-only per-cycle snapshot (Logic Die / PPU views); PE grid fetched on demand. */
 export interface CycleSnapshot {
   cycle: number
   phase: string
@@ -31,8 +69,42 @@ export interface CycleSnapshot {
   top_inject?: (string | null)[]
   bottom_output: (string | null)[]
   active_links: LinkAnim[]
-  progress: Record<string, number>
+  progress: Record<string, number | string>
   memory?: MemoryAccess
+  macro_arrays?: MacroArrayState[][]
+  die_ppuss?: DiePpuState[][]
+  ppu_core_grids?: Record<string, MacroArrayState[][]>
+}
+
+export interface TilePlan {
+  hierarchy?: string
+  die_rows?: number
+  die_cols?: number
+  ppu_count?: number
+  ppu_core_grid?: number
+  grid_rows?: number
+  grid_cols?: number
+  pe_rows: number
+  pe_cols: number
+  dataflow: string
+  active_count: number
+  active_ppu_count?: number
+  tiles: Array<{
+    ppu_index?: number
+    ppu_row?: number
+    ppu_col?: number
+    core_row?: number
+    core_col?: number
+    grid_row?: number
+    grid_col?: number
+    m0: number
+    k0: number
+    n0: number
+    local_m: number
+    local_k: number
+    local_n: number
+    total_cycles?: number
+  }>
 }
 
 export interface MemoryAccess {
@@ -51,4 +123,5 @@ export interface SimulateResponse {
   total_cycles: number
   config: Record<string, unknown>
   dims: { m: number; k: number; n: number }
+  tile_plan?: TilePlan
 }

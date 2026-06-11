@@ -36,12 +36,12 @@ class SystolicArray:
         self.psum_state = [[0.0] * self.cols for _ in range(self.rows)]
         self.weight_state = [[None] * self.cols for _ in range(self.rows)]
 
-    def load_weights(self, k: int, n: int) -> None:
+    def load_weights(self, k: int, n: int, *, k0: int = 0, n0: int = 0) -> None:
         for r in range(k):
             for c in range(n):
                 pe = self.pes[r][c]
                 pe.load_weight()
-                pe.w_coord = [r, c]
+                pe.w_coord = [r + k0, c + n0]
 
     def begin_compute(self) -> None:
         for row in self.pes:
@@ -55,10 +55,10 @@ class SystolicArray:
             for c in range(n):
                 self.pes[r][c].p_coord = [output_row, c]
 
-    def load_psums(self, m: int, n: int) -> None:
+    def load_psums(self, m: int, n: int, *, m0: int = 0, n0: int = 0) -> None:
         for r in range(m):
             for c in range(n):
-                self.pes[r][c].load_psum(r, c)
+                self.pes[r][c].load_psum(r + m0, c + n0)
 
     def begin_compute_os(self, m: int, n: int) -> None:
         for r in range(m):
@@ -91,7 +91,15 @@ class SystolicArray:
         return next_act, next_weight
 
     def annotate_coords_os(
-        self, m_dim: int, k_dim: int, n_dim: int, local_cycle: int
+        self,
+        m_dim: int,
+        k_dim: int,
+        n_dim: int,
+        local_cycle: int,
+        *,
+        m0: int = 0,
+        k0: int = 0,
+        n0: int = 0,
     ) -> None:
         """Set streaming W/A and stationary P coordinates for OS dataflow."""
         for r in range(m_dim):
@@ -99,12 +107,12 @@ class SystolicArray:
                 pe = self.pes[r][c]
                 pe.a_coord = None
                 pe.w_coord = None
-                pe.p_coord = [r, c]
+                pe.p_coord = [r + m0, c + n0]
                 k_idx = local_cycle - r - c
                 if pe.act_in is not None and 0 <= k_idx < k_dim:
-                    pe.a_coord = [r, k_idx]
+                    pe.a_coord = [r + m0, k_idx + k0]
                 if pe.weight_in is not None and 0 <= k_idx < k_dim:
-                    pe.w_coord = [k_idx, c]
+                    pe.w_coord = [k_idx + k0, c + n0]
                 pe.writeback = local_cycle == r + c + k_dim - 1
 
     def capture_pes_full(
@@ -211,7 +219,15 @@ class SystolicArray:
         return next_act, next_psum, bottom_outputs
 
     def annotate_coords(
-        self, m_dim: int, k: int, n: int, local_cycle: int
+        self,
+        m_dim: int,
+        k: int,
+        n: int,
+        local_cycle: int,
+        *,
+        m0: int = 0,
+        k0: int = 0,
+        n0: int = 0,
     ) -> None:
         """Set A[m,k] and P[m,n] coordinates on PEs for the current cycle."""
         for r in range(k):
@@ -220,9 +236,9 @@ class SystolicArray:
                 pe.a_coord = None
                 m_idx = local_cycle - r - c
                 if pe.act_in is not None and 0 <= m_idx < m_dim:
-                    pe.a_coord = [m_idx, r]
+                    pe.a_coord = [m_idx + m0, r + k0]
                 if 0 <= m_idx < m_dim:
-                    pe.p_coord = [m_idx, c]
+                    pe.p_coord = [m_idx + m0, c + n0]
 
     def capture_pes(self, tile_k: int, tile_n: int) -> list[list[PESnapshot]]:
         return self.capture_pes_full(tile_k, tile_n, os_mode=False)

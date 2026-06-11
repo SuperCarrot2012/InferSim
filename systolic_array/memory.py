@@ -8,6 +8,61 @@ FP16_BYTES = 2
 DEFAULT_DTYPE = "fp16"
 
 
+def empty_memory_access(
+    *,
+    bytes_per_elem: int = FP16_BYTES,
+    dtype: str = DEFAULT_DTYPE,
+) -> dict[str, int | str | dict[str, int]]:
+    return {
+        "dtype": dtype,
+        "bytes_per_elem": bytes_per_elem,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "read_elems": 0,
+        "write_elems": 0,
+        "read_breakdown": {"weight": 0, "activation": 0},
+        "write_breakdown": {"output": 0},
+    }
+
+
+def merge_memory_access(
+    left: dict[str, int | str | dict[str, int]],
+    right: dict[str, int | str | dict[str, int]],
+) -> dict[str, int | str | dict[str, int]]:
+    """Sum per-cycle memory stats (e.g. across cores in one PPU)."""
+    l_rb = left.get("read_breakdown", {})
+    r_rb = right.get("read_breakdown", {})
+    l_wb = left.get("write_breakdown", {})
+    r_wb = right.get("write_breakdown", {})
+    if not isinstance(l_rb, dict):
+        l_rb = {}
+    if not isinstance(r_rb, dict):
+        r_rb = {}
+    if not isinstance(l_wb, dict):
+        l_wb = {}
+    if not isinstance(r_wb, dict):
+        r_wb = {}
+
+    read_bytes = int(left.get("read_bytes", 0)) + int(right.get("read_bytes", 0))
+    write_bytes = int(left.get("write_bytes", 0)) + int(right.get("write_bytes", 0))
+
+    return {
+        "dtype": str(left.get("dtype", right.get("dtype", DEFAULT_DTYPE))),
+        "bytes_per_elem": int(left.get("bytes_per_elem", right.get("bytes_per_elem", FP16_BYTES))),
+        "read_bytes": read_bytes,
+        "write_bytes": write_bytes,
+        "read_elems": int(left.get("read_elems", 0)) + int(right.get("read_elems", 0)),
+        "write_elems": int(left.get("write_elems", 0)) + int(right.get("write_elems", 0)),
+        "read_breakdown": {
+            "weight": int(l_rb.get("weight", 0)) + int(r_rb.get("weight", 0)),
+            "activation": int(l_rb.get("activation", 0)) + int(r_rb.get("activation", 0)),
+        },
+        "write_breakdown": {
+            "output": int(l_wb.get("output", 0)) + int(r_wb.get("output", 0)),
+        },
+    }
+
+
 def _spread_read_elems(total: int, load_cycles: int, cycle_idx: int) -> int:
     if load_cycles <= 0:
         return total

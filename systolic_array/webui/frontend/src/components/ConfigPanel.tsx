@@ -1,3 +1,52 @@
+import { useEffect, useState } from 'react'
+import type { TilePlan } from '../types'
+
+function DimInput({
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  value: number
+  min: number
+  max: number
+  onChange: (v: number) => void
+}) {
+  const [text, setText] = useState(String(value))
+
+  useEffect(() => {
+    setText(String(value))
+  }, [value])
+
+  const commit = (raw: string) => {
+    const parsed = parseInt(raw, 10)
+    if (Number.isNaN(parsed)) {
+      setText(String(value))
+      return
+    }
+    const clamped = Math.min(max, Math.max(min, parsed))
+    setText(String(clamped))
+    if (clamped !== value) onChange(clamped)
+  }
+
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      autoComplete="off"
+      value={text}
+      onChange={(e) => {
+        const digits = e.target.value.replace(/\D/g, '')
+        setText(digits)
+        if (digits === '') return
+        const parsed = parseInt(digits, 10)
+        if (!Number.isNaN(parsed)) onChange(Math.min(max, Math.max(min, parsed)))
+      }}
+      onBlur={() => commit(text)}
+    />
+  )
+}
+
 interface Props {
   m: number
   k: number
@@ -5,6 +54,10 @@ interface Props {
   dataflow: 'output_stationary' | 'weight_stationary'
   arrayRows: number
   arrayCols: number
+  osMMax: number
+  osNMax: number
+  wsMaxDim: number
+  tilePlan?: TilePlan | null
   loading: boolean
   onMChange: (v: number) => void
   onKChange: (v: number) => void
@@ -18,8 +71,17 @@ const DATAFLOW_LABELS = {
   weight_stationary: '权重驻留 (WS)',
 } as const
 
+function osTileHint(n: number, pe: number): string {
+  const nSlices = Math.ceil(n / pe)
+  const ppus = Math.ceil(nSlices / 16)
+  const cores = nSlices
+  if (cores === 1) return '1 Core · 1 PPU'
+  if (ppus === 1) return `N 切 ${cores} Core · 1 PPU`
+  return `N 切 ${cores} Core · ${ppus} PPU`
+}
+
 export function ConfigPanel({
-  m, k, n, dataflow, arrayRows, arrayCols, loading,
+  m, k, n, dataflow, arrayRows, arrayCols, osMMax, osNMax, wsMaxDim, tilePlan, loading,
   onMChange, onKChange, onNChange, onDataflowChange, onRun,
 }: Props) {
   const isOS = dataflow === 'output_stationary'
@@ -42,15 +104,15 @@ export function ConfigPanel({
       <div className="config-grid">
         <label>
           M (A 行数)
-          <input type="number" min={1} max={isOS ? arrayRows : 64} value={m} onChange={(e) => onMChange(+e.target.value)} />
+          <DimInput value={m} min={1} max={isOS ? osMMax : wsMaxDim} onChange={onMChange} />
         </label>
         <label>
           K (内维)
-          <input type="number" min={1} max={isOS ? 64 : arrayRows} value={k} onChange={(e) => onKChange(+e.target.value)} />
+          <DimInput value={k} min={1} max={wsMaxDim} onChange={onKChange} />
         </label>
         <label>
           N (B 列数)
-          <input type="number" min={1} max={arrayCols} value={n} onChange={(e) => onNChange(+e.target.value)} />
+          <DimInput value={n} min={1} max={isOS ? osNMax : arrayCols} onChange={onNChange} />
         </label>
       </div>
 
@@ -61,8 +123,30 @@ export function ConfigPanel({
       </div>
 
       <div className="config-note">
-        <strong>约束：</strong>
-        {isOS ? `M ≤ ${arrayRows}` : `K ≤ ${arrayRows}`}，N ≤ {arrayCols}
+        {isOS ? (
+          <>
+            <strong>OS 结构：</strong>Logic Die View → PPU View → Systolic Core View<br />
+            <strong>约束：</strong>M ∈ [1,{osMMax}]；N 优先切分，最大 {osNMax}<br />
+            <strong>分块：</strong>{osTileHint(n, arrayCols)}
+            {tilePlan && (
+              <>
+                <br />
+                <strong>当前：</strong>{tilePlan.active_ppu_count ?? 0} PPU · {tilePlan.active_count} Core
+              </>
+            )}
+          </>
+        ) : (
+          <>
+            <strong>WS：</strong>4×4 阵列，每块 {arrayRows}×{arrayCols} PE<br />
+            <strong>约束：</strong>K ≤ {arrayRows}，N ≤ {arrayCols}
+            {tilePlan && (
+              <>
+                <br />
+                <strong>当前：</strong>{tilePlan.active_count} 阵列激活
+              </>
+            )}
+          </>
+        )}
       </div>
     </div>
   )

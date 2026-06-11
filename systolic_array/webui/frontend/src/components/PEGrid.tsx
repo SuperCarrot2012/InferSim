@@ -14,7 +14,22 @@ const TOP_LABEL_HEIGHT = 28
 const TOP_INJECT_LANE = 44
 const MARGIN_Y = TOP_PAD + TOP_LABEL_HEIGHT + TOP_INJECT_LANE
 const FONT_SIZE = 20
-const LABEL_FS = 22
+const PE_TEXT_PAD = 10
+const PE_FONT_MIN = 9
+const LABEL_FS_MAX = 22
+const LABEL_FS_MIN = 7
+const MONO_CHAR_WIDTH = 0.58
+
+function fitMonoFontSize(
+  text: string,
+  maxWidth: number,
+  maxFs = LABEL_FS_MAX,
+  minFs = LABEL_FS_MIN,
+): number {
+  if (!text) return maxFs
+  const size = maxWidth / (text.length * MONO_CHAR_WIDTH)
+  return Math.max(minFs, Math.min(maxFs, Math.floor(size)))
+}
 const OUTPUT_GAP = PE_GAP
 const OUTPUT_BOTTOM_MARGIN = 12
 
@@ -61,7 +76,7 @@ export function PEGrid({ snapshot, gridRows, gridCols, selected, onSelect }: Pro
   const width = gridCols * (PE_CELL + PE_GAP) - PE_GAP + MARGIN_X + 16
   const needsBottomPadding = hasBottomOutput && (!overlayBottomOutput || fullActiveTile)
   const height = needsBottomPadding
-    ? bottomLabelY + LABEL_FS + OUTPUT_BOTTOM_MARGIN
+    ? bottomLabelY + LABEL_FS_MAX + OUTPUT_BOTTOM_MARGIN
     : MARGIN_Y + gridContentH + 8
   const injectLabelX = LEFT_PAD + LEFT_LABEL_WIDTH
   const injectArrowX1 = injectLabelX + 8
@@ -153,7 +168,7 @@ export function PEGrid({ snapshot, gridRows, gridCols, selected, onSelect }: Pro
             x={peX(c) + PE_CELL / 2}
             y={topLabelY}
             fill="#a78bfa"
-            fontSize={LABEL_FS}
+            fontSize={fitMonoFontSize(label, PE_CELL - 4)}
             fontFamily="JetBrains Mono"
             textAnchor="middle"
             dominantBaseline="middle"
@@ -170,7 +185,7 @@ export function PEGrid({ snapshot, gridRows, gridCols, selected, onSelect }: Pro
             x={injectLabelX}
             y={peY(r) + PE_CELL / 2}
             fill="#38bdf8"
-            fontSize={LABEL_FS}
+            fontSize={fitMonoFontSize(label, LEFT_LABEL_WIDTH - 8)}
             fontFamily="JetBrains Mono"
             textAnchor="end"
             dominantBaseline="middle"
@@ -201,7 +216,7 @@ export function PEGrid({ snapshot, gridRows, gridCols, selected, onSelect }: Pro
               x={peX(c) + PE_CELL / 2}
               y={bottomLabelY}
               fill="#fbbf24"
-              fontSize={LABEL_FS}
+              fontSize={fitMonoFontSize(label, PE_CELL - 4)}
               fontFamily="JetBrains Mono"
               textAnchor="middle"
               dominantBaseline={overlayBottomOutput && !fullActiveTile ? 'middle' : 'hanging'}
@@ -215,6 +230,12 @@ export function PEGrid({ snapshot, gridRows, gridCols, selected, onSelect }: Pro
         )}
     </svg>
   )
+}
+
+function fitPeFontSize(labels: string[]): number {
+  if (!labels.length) return FONT_SIZE
+  const innerWidth = PE_CELL - PE_TEXT_PAD * 2
+  return Math.min(...labels.map((l) => fitMonoFontSize(l, innerWidth, FONT_SIZE, PE_FONT_MIN)))
 }
 
 function PECell({
@@ -245,6 +266,11 @@ function PECell({
   const macActive = !idle && pe.has_act && (pe.has_weight || !!pe.w_coord)
   const borderColor = selected ? '#f472b6' : pe.writeback ? '#fbbf24' : phaseColor
 
+  const wText = !idle && pe.w_coord ? coordLabel('W', pe.w_coord) : ''
+  const aText = !idle && pe.has_act && pe.a_coord ? coordLabel('A', pe.a_coord) : ''
+  const pText = !idle && pe.has_psum && pe.p_coord ? coordLabel('P', pe.p_coord) : ''
+  const labelFs = fitPeFontSize([wText, aText, pText].filter(Boolean))
+
   return (
     <g onClick={onClick} style={{ cursor: idle ? 'default' : 'pointer' }}>
       <motion.rect
@@ -261,18 +287,18 @@ function PECell({
         transition={{ repeat: pe.writeback || macActive ? Infinity : 0, duration: 1.2 }}
       />
       {!idle && pe.w_coord && (
-        <text x={x + PE_CELL / 2} y={line1} fill="#a78bfa" fontSize={FONT_SIZE} fontFamily="JetBrains Mono" textAnchor="middle">
-          {coordLabel('W', pe.w_coord)}
+        <text x={x + PE_CELL / 2} y={line1} fill="#a78bfa" fontSize={labelFs} fontFamily="JetBrains Mono" textAnchor="middle">
+          {wText}
         </text>
       )}
       {!idle && pe.has_act && pe.a_coord && (
-        <text x={x + PE_CELL / 2} y={line2} fill="#38bdf8" fontSize={FONT_SIZE} fontFamily="JetBrains Mono" textAnchor="middle">
-          {coordLabel('A', pe.a_coord)}
+        <text x={x + PE_CELL / 2} y={line2} fill="#38bdf8" fontSize={labelFs} fontFamily="JetBrains Mono" textAnchor="middle">
+          {aText}
         </text>
       )}
       {!idle && pe.has_psum && pe.p_coord && (
-        <text x={x + PE_CELL / 2} y={line3} fill="#34d399" fontSize={FONT_SIZE} fontFamily="JetBrains Mono" textAnchor="middle">
-          {coordLabel('P', pe.p_coord)}
+        <text x={x + PE_CELL / 2} y={line3} fill="#34d399" fontSize={labelFs} fontFamily="JetBrains Mono" textAnchor="middle">
+          {pText}
         </text>
       )}
       {!idle && pe.writeback && (

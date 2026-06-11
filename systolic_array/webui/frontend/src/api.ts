@@ -1,4 +1,4 @@
-import type { CycleSnapshot, DataflowType, SimulateResponse } from './types'
+import type { CycleSnapshot, DataflowType, MemoryAccess, MicroTileSnapshot, SimulateResponse } from './types'
 
 const API = '/api'
 
@@ -27,6 +27,32 @@ export async function fetchAllSnapshots(simId: string): Promise<CycleSnapshot[]>
   if (!res.ok) throw new Error('Failed to load snapshots')
   const data = await res.json()
   return data.snapshots
+}
+
+export async function fetchMicroSnapshot(
+  simId: string,
+  cycle: number,
+  tileKey: string,
+): Promise<MicroTileSnapshot> {
+  const res = await fetch(
+    `${API}/simulate/${simId}/micro/${cycle}?tile_key=${encodeURIComponent(tileKey)}`,
+  )
+  if (!res.ok) throw new Error('Failed to load micro snapshot')
+  const data = await res.json()
+  return data.micro
+}
+
+export async function fetchPpuMemory(
+  simId: string,
+  cycle: number,
+  ppuIndex: number,
+): Promise<MemoryAccess & { contributing_cores: number }> {
+  const res = await fetch(
+    `${API}/simulate/${simId}/ppu_memory/${cycle}?ppu_index=${ppuIndex}`,
+  )
+  if (!res.ok) throw new Error('Failed to load PPU memory stats')
+  const data = await res.json()
+  return data.memory
 }
 
 export function coordLabel(prefix: string, coord: [number, number] | null): string {
