@@ -1,0 +1,142 @@
+import type {
+  CycleSnapshot,
+  DataflowType,
+  MacroArrayState,
+  MemoryAccess,
+  MemoryPeakStats,
+  MicroTileSnapshot,
+  ModelCatalog,
+  SimulateResponse,
+} from './types'
+
+const API = '/api'
+
+export async function fetchModels(): Promise<ModelCatalog> {
+  const res = await fetch(`${API}/models`)
+  if (!res.ok) throw new Error('Failed to load models')
+  return res.json()
+}
+
+export async function runModelSimulation(body: {
+  model_id: string
+  gemm_id: string
+  rows: number
+  cols: number
+  dataflow: DataflowType
+}): Promise<SimulateResponse> {
+  const res = await fetch(`${API}/simulate/model`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...body, mac_latency: 1, weight_load_cycles: 1 }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    const detail = err.detail
+    const message = typeof detail === 'string'
+      ? detail
+      : Array.isArray(detail)
+        ? detail.map((d: { msg?: string }) => d.msg ?? String(d)).join('; ')
+        : 'Simulation failed'
+    throw new Error(message)
+  }
+  return res.json()
+}
+
+export async function runSimulation(body: {
+  m: number
+  k: number
+  n: number
+  rows: number
+  cols: number
+  dataflow: DataflowType
+}): Promise<SimulateResponse> {
+  const res = await fetch(`${API}/simulate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...body, mac_latency: 1, weight_load_cycles: 1 }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    const detail = err.detail
+    const message = typeof detail === 'string'
+      ? detail
+      : Array.isArray(detail)
+        ? detail.map((d: { msg?: string }) => d.msg ?? String(d)).join('; ')
+        : 'Simulation failed'
+    throw new Error(message)
+  }
+  return res.json()
+}
+
+export async function fetchAllSnapshots(simId: string): Promise<CycleSnapshot[]> {
+  const res = await fetch(`${API}/simulate/${simId}/snapshots?from_cycle=0`)
+  if (!res.ok) throw new Error('Failed to load snapshots')
+  const data = await res.json()
+  return data.snapshots
+}
+
+export async function fetchPpuCoreGrid(
+  simId: string,
+  cycle: number,
+  ppuIndex: number,
+): Promise<MacroArrayState[][]> {
+  const res = await fetch(
+    `${API}/simulate/${simId}/ppu_grid/${cycle}?ppu_index=${ppuIndex}`,
+  )
+  if (!res.ok) throw new Error('Failed to load PPU core grid')
+  const data = await res.json()
+  return data.cores
+}
+
+export async function fetchMicroSnapshot(
+  simId: string,
+  cycle: number,
+  tileKey: string,
+): Promise<MicroTileSnapshot> {
+  const res = await fetch(
+    `${API}/simulate/${simId}/micro/${cycle}?tile_key=${encodeURIComponent(tileKey)}`,
+  )
+  if (!res.ok) throw new Error('Failed to load micro snapshot')
+  const data = await res.json()
+  return data.micro
+}
+
+export async function fetchPpuMemory(
+  simId: string,
+  cycle: number,
+  ppuIndex: number,
+): Promise<MemoryAccess & { contributing_cores: number }> {
+  const res = await fetch(
+    `${API}/simulate/${simId}/ppu_memory/${cycle}?ppu_index=${ppuIndex}`,
+  )
+  if (!res.ok) throw new Error('Failed to load PPU memory stats')
+  const data = await res.json()
+  return data.memory
+}
+
+export async function fetchCoreMemoryPeak(
+  simId: string,
+  tileKey: string,
+): Promise<MemoryPeakStats> {
+  const res = await fetch(
+    `${API}/simulate/${simId}/core_memory_peak?tile_key=${encodeURIComponent(tileKey)}`,
+  )
+  if (!res.ok) throw new Error('Failed to load core memory peak')
+  const data = await res.json()
+  return data.peak
+}
+
+export async function fetchPpuMemoryPeak(
+  simId: string,
+  ppuIndex: number,
+): Promise<MemoryPeakStats> {
+  const res = await fetch(`${API}/simulate/${simId}/ppu_memory_peak?ppu_index=${ppuIndex}`)
+  if (!res.ok) throw new Error('Failed to load PPU memory peak')
+  const data = await res.json()
+  return data.peak
+}
+
+export function coordLabel(prefix: string, coord: [number, number] | null): string {
+  if (!coord) return '—'
+  return `${prefix}[${coord[0]},${coord[1]}]`
+}
