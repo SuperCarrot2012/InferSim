@@ -211,6 +211,7 @@ export interface LogicDieLpddrWaveSchedule {
   compute_only_cycles: number
   peak_lpddr_bytes_per_cycle: number
   bottleneck: 'lpddr' | 'compute'
+  w_full_resident?: boolean
   ppus?: Array<{
     ppu_index: number
     local_m: number

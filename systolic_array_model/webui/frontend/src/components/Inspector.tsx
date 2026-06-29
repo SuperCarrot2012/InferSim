@@ -165,6 +165,7 @@ export function Inspector({
                   activePpuCount={activePpuCount}
                   ppuBytesPerCycle={ppuLpddrBytesPerCycle}
                   numKChunks={lpddrForWave.num_k_chunks}
+                  wFullResident={lpddrForWave.w_full_resident ?? false}
                   waveIndex={currentWaveIndex}
                   waveCount={waveCount}
                 />
@@ -258,6 +259,7 @@ function LpddrPrefetchPanel({
   activePpuCount,
   ppuBytesPerCycle,
   numKChunks,
+  wFullResident,
   waveIndex,
   waveCount,
 }: {
@@ -270,6 +272,7 @@ function LpddrPrefetchPanel({
   activePpuCount: number
   ppuBytesPerCycle: number
   numKChunks: number
+  wFullResident: boolean
   waveIndex: number
   waveCount: number
 }) {
@@ -277,7 +280,7 @@ function LpddrPrefetchPanel({
     <div className="memory-subpanel sram-capacity-panel">
       <h5>LPDDR → SRAM Prefetch</h5>
       <div className="memory-dtype mono">
-        Double-buffer · A 全驻留 PPU SRAM
+        {wFullResident ? 'W 全驻留' : 'Double-buffer'} · A 全驻留 PPU SRAM
         {waveCount > 1 && <> · Wave {waveIndex + 1}/{waveCount}</>}
       </div>
       <div className="memory-section-label">当前 PPU</div>

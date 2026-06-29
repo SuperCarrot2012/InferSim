@@ -24,14 +24,23 @@ def ppu_sram_bytes(ppu_sram_kb: int) -> int:
     return ppu_sram_kb * 1024
 
 
+def w_fits_in_sram(local_m: int, local_k: int, local_n: int, *, ppu_sram_kb: int) -> bool:
+    """True when full A and W tiles fit in PPU SRAM (no K streaming required)."""
+    sram = ppu_sram_bytes(ppu_sram_kb)
+    a_bytes = local_m * local_k * FP16_BYTES
+    w_bytes = local_k * local_n * FP16_BYTES
+    return a_bytes + w_bytes <= sram
+
+
 def compute_k_chunk_elems(
     local_m: int,
     local_k: int,
     local_n: int,
     *,
     ppu_sram_kb: int,
+    double_buffer: bool = True,
 ) -> int:
-    """Max K columns per W prefetch buffer (one half of SRAM after full A resident)."""
+    """Max K columns per W prefetch buffer after full A resident."""
     sram = ppu_sram_bytes(ppu_sram_kb)
     a_bytes = local_m * local_k * FP16_BYTES
     if a_bytes > sram:
@@ -40,7 +49,11 @@ def compute_k_chunk_elems(
         )
     if local_n <= 0:
         return local_k
-    w_buf_one = (sram - a_bytes) // 2
+    w_bytes = local_k * local_n * FP16_BYTES
+    remain = sram - a_bytes
+    w_buf_one = remain // 2 if double_buffer else remain
+    if w_bytes <= w_buf_one:
+        return local_k
     k_chunk = w_buf_one // (local_n * FP16_BYTES)
     return max(1, min(k_chunk, local_k))
 
@@ -148,8 +161,8 @@ def logic_die_lpddr_schedule(
             continue
 
         ppu_list = _ppu_summaries(wave_tiles)
-        k_chunk = min(
-            compute_k_chunk_elems(
+        w_full_resident = all(
+            w_fits_in_sram(
                 p["local_m"],
                 p["local_k"],
                 p["local_n"],
@@ -157,8 +170,19 @@ def logic_die_lpddr_schedule(
             )
             for p in ppu_list
         )
+        use_double_buffer = not w_full_resident
+        k_chunk = min(
+            compute_k_chunk_elems(
+                p["local_m"],
+                p["local_k"],
+                p["local_n"],
+                ppu_sram_kb=ppu_sram_kb,
+                double_buffer=use_double_buffer,
+            )
+            for p in ppu_list
+        )
         local_k = ppu_list[0]["local_k"]
-        k_chunks = split_k_chunks(local_k, k_chunk)
+        k_chunks = [local_k] if w_full_resident else split_k_chunks(local_k, k_chunk)
 
         a_bytes = m * k * FP16_BYTES
         a_load_cycles = cycles_for_bytes(a_bytes, lpddr_bpc)
@@ -167,22 +191,35 @@ def logic_die_lpddr_schedule(
         compute_cycles: list[int] = []
         peak_lpddr_bpc = 0
 
-        for k_j in k_chunks:
-            w_bytes = sum(p["local_n"] * k_j * FP16_BYTES for p in ppu_list)
-            p_cy = cycles_for_bytes(w_bytes, lpddr_bpc)
-            prefetch_cycles.append(p_cy)
-            if lpddr_bpc > 0:
-                peak_lpddr_bpc = max(peak_lpddr_bpc, math.ceil(w_bytes / p_cy))
-
-            c_cy = max(
-                compute_os_cycle_count(int(t["local_m"]), k_j, int(t["local_n"]))
-                for t in wave_tiles
+        if w_full_resident:
+            w_bytes = sum(p["local_n"] * local_k * FP16_BYTES for p in ppu_list)
+            w_load_cycles = cycles_for_bytes(w_bytes, lpddr_bpc)
+            prefetch_cycles = [w_load_cycles]
+            compute_cycles = [_wave_compute_only_cycles(wave_tiles)]
+            if lpddr_bpc > 0 and w_load_cycles > 0:
+                peak_lpddr_bpc = math.ceil(w_bytes / w_load_cycles)
+            pipeline = (
+                a_load_cycles
+                + w_load_cycles
+                + compute_cycles[0]
             )
-            compute_cycles.append(c_cy)
+        else:
+            for k_j in k_chunks:
+                w_bytes = sum(p["local_n"] * k_j * FP16_BYTES for p in ppu_list)
+                p_cy = cycles_for_bytes(w_bytes, lpddr_bpc)
+                prefetch_cycles.append(p_cy)
+                if lpddr_bpc > 0:
+                    peak_lpddr_bpc = max(peak_lpddr_bpc, math.ceil(w_bytes / p_cy))
 
-        pipeline = a_load_cycles + double_buffer_pipeline_cycles(
-            prefetch_cycles, compute_cycles
-        )
+                c_cy = max(
+                    compute_os_cycle_count(int(t["local_m"]), k_j, int(t["local_n"]))
+                    for t in wave_tiles
+                )
+                compute_cycles.append(c_cy)
+
+            pipeline = a_load_cycles + double_buffer_pipeline_cycles(
+                prefetch_cycles, compute_cycles
+            )
         c_bytes = sum(p["local_m"] * p["local_n"] * FP16_BYTES for p in ppu_list)
         c_writeback_cycles = cycles_for_bytes(c_bytes, lpddr_bpc)
         pipeline += c_writeback_cycles
@@ -214,6 +251,7 @@ def logic_die_lpddr_schedule(
                 "compute_only_cycles": wave_compute_only,
                 "peak_lpddr_bytes_per_cycle": peak_lpddr_bpc,
                 "bottleneck": bottleneck,
+                "w_full_resident": w_full_resident,
                 "ppus": [
                     {
                         **p,
@@ -222,10 +260,18 @@ def logic_die_lpddr_schedule(
                             p["local_k"],
                             p["local_n"],
                             ppu_sram_kb=ppu_sram_kb,
+                            double_buffer=use_double_buffer,
                         ),
                         "a_bytes": p["local_m"] * p["local_k"] * FP16_BYTES,
                         "w_bytes": p["local_k"] * p["local_n"] * FP16_BYTES,
-                        "w_buf_bytes": (ppu_sram_bytes(ppu_sram_kb) - p["local_m"] * p["local_k"] * FP16_BYTES) // 2,
+                        "w_buf_bytes": (
+                            p["local_k"] * p["local_n"] * FP16_BYTES
+                            if w_full_resident
+                            else (
+                                (ppu_sram_bytes(ppu_sram_kb) - p["local_m"] * p["local_k"] * FP16_BYTES)
+                                // (2 if use_double_buffer else 1)
+                            )
+                        ),
                     }
                     for p in ppu_list
                 ],
@@ -235,13 +281,14 @@ def logic_die_lpddr_schedule(
         total_compute_only += wave_compute_only
 
     overall_bottleneck = "lpddr" if total_pipeline > compute_only_cycles else "compute"
+    any_double_buffer = any(not w["w_full_resident"] for w in wave_stats)
 
     return {
         "ppu_sram_size_kb": ppu_sram_kb,
         "lpddr_bandwidth_gbps": lpddr_bandwidth_gbps,
         "clock_ghz": clock_ghz,
         "lpddr_bytes_per_cycle": lpddr_bpc,
-        "double_buffer": True,
+        "double_buffer": any_double_buffer,
         "compute_only_cycles": compute_only_cycles,
         "lpddr_aware_cycles": total_pipeline,
         "bottleneck": overall_bottleneck,
