@@ -7,11 +7,52 @@ const PE_PER_CORE = CORE_PE * CORE_PE
 
 export const TC_GRID = 4
 
+/** Assumed Logic Die clock for compute metrics display. */
+export const LOGIC_DIE_CLOCK_GHZ = 1
+export const LOGIC_DIE_CLOCK_HZ = LOGIC_DIE_CLOCK_GHZ * 1e9
+/** One MAC = one multiply-accumulate ≈ 2 FLOPs. */
+export const FLOPS_PER_MAC = 2
+
 export interface LogicDieUtilStats {
   utilization: number
   actualMacs: number
   capacityMacs: number
   viewLabel: string
+  clockGhz: number
+  /** Effective average MACs completed per simulation cycle. */
+  macsPerCycle: number
+  /** Peak MAC slots per cycle when the hierarchy is fully active. */
+  peakMacsPerCycle: number
+  /** Effective throughput at ``clockGhz`` (MAC/cycle × Hz × 2). */
+  flopsPerSec: number
+  peakFlopsPerSec: number
+  /** ``peakMacsPerCycle × 2 × clockGhz / 1000`` — peak TFLOP/s @ 1 GHz. */
+  peakTflops: number
+  effectiveTflops: number
+}
+
+/** Peak TFLOP/s = MAC/cycle × 2 FLOP/MAC × GHz / 1000. */
+export function computePeakTflops(
+  peakMacsPerCycle: number,
+  clockGhz: number = LOGIC_DIE_CLOCK_GHZ,
+): number {
+  return (peakMacsPerCycle * FLOPS_PER_MAC * clockGhz) / 1e3
+}
+
+export function formatTflops(tflops: number): string {
+  if (!Number.isFinite(tflops) || tflops <= 0) return '0 TFLOP/s'
+  if (tflops >= 100) return `${Math.round(tflops)} TFLOP/s`
+  if (tflops >= 10) return `${tflops.toFixed(1)} TFLOP/s`
+  return `${tflops.toFixed(2)} TFLOP/s`
+}
+
+export function formatFlopsPerSec(flops: number): string {
+  if (!Number.isFinite(flops) || flops <= 0) return '0 FLOP/s'
+  const tflops = flops / 1e12
+  if (tflops >= 1) return formatTflops(tflops)
+  if (flops >= 1e9) return `${(flops / 1e9).toFixed(2)} GFLOP/s`
+  if (flops >= 1e6) return `${(flops / 1e6).toFixed(2)} MFLOP/s`
+  return `${flops.toLocaleString(undefined, { maximumFractionDigits: 0 })} FLOP/s`
 }
 
 /** Actual MACs (M×K×N) / full hierarchy MAC slots over all simulation cycles. */
@@ -24,16 +65,29 @@ export function computeHierarchyUtilization(
 
   const actualMacs = dims.m * dims.k * dims.n
   const isOS = dataflow === 'output_stationary'
-  const capacityMacs = isOS
-    ? DIE_PPU_COUNT * PPU_CORE_COUNT * PE_PER_CORE * totalCycles
-    : TC_GRID * TC_GRID * PE_PER_CORE * totalCycles
+  const peakMacsPerCycle = isOS
+    ? DIE_PPU_COUNT * PPU_CORE_COUNT * PE_PER_CORE
+    : TC_GRID * TC_GRID * PE_PER_CORE
+  const capacityMacs = peakMacsPerCycle * totalCycles
   const utilization = capacityMacs > 0 ? actualMacs / capacityMacs : 0
+  const macsPerCycle = actualMacs / totalCycles
+  const flopsPerSec = macsPerCycle * LOGIC_DIE_CLOCK_HZ * FLOPS_PER_MAC
+  const peakFlopsPerSec = peakMacsPerCycle * LOGIC_DIE_CLOCK_HZ * FLOPS_PER_MAC
+  const peakTflops = computePeakTflops(peakMacsPerCycle, LOGIC_DIE_CLOCK_GHZ)
+  const effectiveTflops = computePeakTflops(macsPerCycle, LOGIC_DIE_CLOCK_GHZ)
 
   return {
     utilization,
     actualMacs,
     capacityMacs,
     viewLabel: isOS ? 'Logic Die View' : 'Tensor Core View',
+    clockGhz: LOGIC_DIE_CLOCK_GHZ,
+    macsPerCycle,
+    peakMacsPerCycle,
+    flopsPerSec,
+    peakFlopsPerSec,
+    peakTflops,
+    effectiveTflops,
   }
 }
 
@@ -63,6 +117,7 @@ export function summarizePpuView(
   cores: MacroArrayState[][] | null | undefined,
   selected: { row: number; col: number } | null,
   tilePlan?: TilePlan,
+  waveIndex = 0,
 ): PpuViewStats | null {
   if (!cores) return null
 
@@ -83,7 +138,7 @@ export function summarizePpuView(
   if (selected) {
     const cell = cores[selected.row]?.[selected.col]
     if (cell?.active) {
-      const tileKey = coreTileKey(ppuIndex, selected)
+      const tileKey = coreTileKey(waveIndex, ppuIndex, selected)
       const tileMeta = findTileByKey(tilePlan, tileKey)
       selectedCore = {
         row: selected.row,
@@ -117,7 +172,8 @@ export type TileEntry = TilePlan['tiles'][number]
 
 export function tileKeyFromEntry(tile: TileEntry): string {
   if (tile.ppu_index != null && tile.core_row != null && tile.core_col != null) {
-    return `${tile.ppu_index},${tile.core_row},${tile.core_col}`
+    const wave = tile.wave_index ?? 0
+    return `${wave},${tile.ppu_index},${tile.core_row},${tile.core_col}`
   }
   return `${tile.grid_row},${tile.grid_col}`
 }
@@ -138,8 +194,28 @@ export function effectiveMicroCycle(globalCycle: number, tileCycles: number): nu
   return Math.min(Math.max(0, globalCycle), tileCycles - 1)
 }
 
-export function coreTileKey(ppuIndex: number, core: { row: number; col: number }): string {
-  return `${ppuIndex},${core.row},${core.col}`
+export function coreTileKey(
+  waveIndex: number,
+  ppuIndex: number,
+  core: { row: number; col: number },
+): string {
+  return `${waveIndex},${ppuIndex},${core.row},${core.col}`
+}
+
+export function waveIndexFromSnapshot(
+  snap: { progress?: Record<string, unknown> } | null,
+): number {
+  const wave = snap?.progress?.wave_index
+  return typeof wave === 'number' ? wave : Number(wave ?? 0)
+}
+
+export function waveLocalCycleFromSnapshot(
+  snap: { cycle?: number; progress?: Record<string, unknown> } | null,
+): number {
+  const local = snap?.progress?.wave_local_cycle
+  if (typeof local === 'number') return local
+  if (local != null) return Number(local)
+  return snap?.cycle ?? 0
 }
 
 export function ppuIndexFromDie(row: number, col: number): number {

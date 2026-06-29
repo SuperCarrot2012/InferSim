@@ -11,6 +11,7 @@ from systolic_array_model.hierarchy import (
     OS_K_MAX,
     OS_M_MAX,
     PPU_CORE_COUNT,
+    os_n_wave_count,
 )
 
 
@@ -23,16 +24,20 @@ class GemmOp:
     n: int
     note: str = ""
 
-    def ppus_needed(self) -> int:
-        n_slices = math.ceil(self.n / CORE_PE)
-        return math.ceil(n_slices / PPU_CORE_COUNT)
-
     def fits_die(self) -> bool:
         if self.m < 1 or self.m > OS_M_MAX:
             return False
         if self.k < 1 or self.k > OS_K_MAX:
             return False
-        return self.ppus_needed() <= DIE_PPU_COUNT
+        return True
+
+    def wave_count(self) -> int:
+        return os_n_wave_count(self.n)
+
+    def ppus_needed(self) -> int:
+        """PPUs used in the busiest wave."""
+        n_slices = math.ceil(min(self.n, DIE_PPU_COUNT * PPU_CORE_COUNT * CORE_PE) / CORE_PE)
+        return math.ceil(n_slices / PPU_CORE_COUNT)
 
     def to_dict(self) -> dict:
         return {
@@ -43,6 +48,7 @@ class GemmOp:
             "n": self.n,
             "note": self.note,
             "ppus_needed": self.ppus_needed(),
+            "wave_count": self.wave_count(),
             "fits_die": self.fits_die(),
         }
 
@@ -78,10 +84,8 @@ LLAMA3_8B = ModelSpec(
     label="Llama3-8B",
     description="Decode 单 token 步 (batch=1, seq=1, tp=1)",
     gemm_ops=[
-        GemmOp("q_proj", "Q_Proj", _DECODE_M, _HIDDEN, _HEADS * _HEAD_DIM),
-        GemmOp("k_proj", "K_Proj", _DECODE_M, _HIDDEN, _KV_HEADS * _HEAD_DIM),
-        GemmOp("v_proj", "V_Proj", _DECODE_M, _HIDDEN, _KV_HEADS * _HEAD_DIM),
-        GemmOp("o_proj", "O_Proj", _DECODE_M, _HIDDEN, _HIDDEN),
+        GemmOp("qo_proj", "Q/O_Proj", _DECODE_M, _HIDDEN, _HIDDEN, note="Q_Proj · O_Proj"),
+        GemmOp("kv_proj", "K/V_Proj", _DECODE_M, _HIDDEN, _KV_HEADS * _HEAD_DIM, note="K_Proj · V_Proj"),
         GemmOp("gate_proj", "Gate_Proj", _DECODE_M, _HIDDEN, _INTERMEDIATE),
         GemmOp("up_proj", "Up_Proj", _DECODE_M, _HIDDEN, _INTERMEDIATE),
         GemmOp("down_proj", "Down_Proj", _DECODE_M, _INTERMEDIATE, _HIDDEN),
@@ -98,12 +102,13 @@ def get_models_catalog() -> dict:
     return {
         "models": [spec.to_dict() for spec in _MODELS.values()],
         "default_model_id": LLAMA3_8B.id,
-        "default_gemm_id": "q_proj",
+        "default_gemm_id": "qo_proj",
         "hardware": {
             "die_ppu_count": DIE_PPU_COUNT,
             "os_m_max": OS_M_MAX,
             "os_k_max": OS_K_MAX,
             "os_n_max": DIE_PPU_COUNT * PPU_CORE_COUNT * CORE_PE,
+            "os_n_wave_max": DIE_PPU_COUNT * PPU_CORE_COUNT * CORE_PE,
             "memory": "sram_only",
         },
     }

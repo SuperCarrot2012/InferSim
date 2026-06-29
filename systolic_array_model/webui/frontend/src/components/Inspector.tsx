@@ -3,6 +3,7 @@ import { coordLabel } from '../api'
 import type { MemoryAccess, MemoryPeakStats } from '../types'
 import { formatBytesPerCycle } from '../memory'
 import type { LogicDieUtilStats, PpuViewStats } from '../microSnapshot'
+import { formatTflops } from '../microSnapshot'
 
 interface Props {
   pe: PESnapshot | null
@@ -44,6 +45,17 @@ export function Inspector({
         <div className="inspector-section logic-die-view-panel">
           <h4>{logicDieUtil.viewLabel}</h4>
           <div className="stat-row">
+            <span className="label">频率</span>
+            <span className="value mono">{logicDieUtil.clockGhz} GHz</span>
+          </div>
+          <div className="stat-row section-start">
+            <span className="label">峰值算力</span>
+            <span className="value mono logic-die-peak">
+              <span>{logicDieUtil.peakMacsPerCycle.toLocaleString()} MAC/cycle</span>
+              <span>{formatTflops(logicDieUtil.peakTflops)}</span>
+            </span>
+          </div>
+          <div className="stat-row">
             <span className="label">利用率</span>
             <span className="value mono logic-die-util">
               {(logicDieUtil.utilization * 100).toFixed(2)}%
@@ -76,8 +88,7 @@ export function Inspector({
           </div>
           {ppuView.selectedCore ? (
             <>
-              <div className="ppu-view-divider" />
-              <div className="stat-row">
+              <div className="stat-row section-start">
                 <span className="label">选中 Core</span>
                 <span className="value mono">[{ppuView.selectedCore.row},{ppuView.selectedCore.col}]</span>
               </div>
@@ -109,10 +120,7 @@ export function Inspector({
           )}
 
           {ppuMemory && (
-            <>
-              <div className="ppu-view-divider" />
-              <MemoryStatsPanel memory={ppuMemory} peak={ppuMemoryPeak} />
-            </>
+            <MemoryStatsPanel memory={ppuMemory} peak={ppuMemoryPeak} />
           )}
         </div>
       )}

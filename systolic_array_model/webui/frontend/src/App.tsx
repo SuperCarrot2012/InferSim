@@ -12,13 +12,14 @@ import {
 import type {
   CycleSnapshot,
   DataflowType,
-  GemmOpInfo,
   MacroArrayState,
   MemoryAccess,
   MemoryPeakStats,
   MicroTileSnapshot,
   ModelCatalog,
+  SimCacheEntry,
   SimulateResponse,
+  GemmSimStat,
 } from './types'
 import { ModelPanel } from './components/ModelPanel'
 import { ControlBar } from './components/ControlBar'
@@ -37,6 +38,8 @@ import {
   ppuIndexFromDie,
   summarizePpuView,
   tileCycleCount,
+  waveIndexFromSnapshot,
+  waveLocalCycleFromSnapshot,
 } from './microSnapshot'
 import './App.css'
 
@@ -44,6 +47,10 @@ const ARRAY_ROWS = 16
 const ARRAY_COLS = 16
 const DIE_PPU_COUNT = 32
 const EMPTY_GRID = emptySnapshot(ARRAY_ROWS, ARRAY_COLS)
+
+function simCacheKey(modelId: string, gemmId: string, dataflow: DataflowType): string {
+  return `${modelId}:${gemmId}:${dataflow}`
+}
 
 function microToCycleSnapshot(
   macro: CycleSnapshot,
@@ -68,14 +75,15 @@ function microToCycleSnapshot(
 export default function App() {
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null)
   const [selectedModelId, setSelectedModelId] = useState('llama3-8b')
-  const [selectedGemmId, setSelectedGemmId] = useState<string | null>('q_proj')
+  const [selectedGemmId, setSelectedGemmId] = useState<string | null>('qo_proj')
   const [dataflow, setDataflow] = useState<DataflowType>('output_stationary')
   const [response, setResponse] = useState<SimulateResponse | null>(null)
   const [snapshots, setSnapshots] = useState<CycleSnapshot[]>([])
   const [frameIndex, setFrameIndex] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState(1000)
-  const [loading, setLoading] = useState(false)
+  const [initLoading, setInitLoading] = useState(true)
+  const [gemmStats, setGemmStats] = useState<Record<string, GemmSimStat>>({})
   const [microLoading, setMicroLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<{ row: number; col: number } | null>(null)
@@ -90,6 +98,9 @@ export default function App() {
   const [ppuCores, setPpuCores] = useState<MacroArrayState[][] | null>(null)
   const [started, setStarted] = useState(false)
   const playRef = useRef<number | null>(null)
+  const simCacheRef = useRef<Map<string, SimCacheEntry>>(new Map())
+  const selectedGemmIdRef = useRef(selectedGemmId)
+  selectedGemmIdRef.current = selectedGemmId
   const microCache = useRef<Map<string, MicroTileSnapshot>>(new Map())
   const ppuGridCache = useRef<Map<string, MacroArrayState[][]>>(new Map())
   const ppuMemoryCache = useRef<Map<string, MemoryAccess & { contributing_cores: number }>>(new Map())
@@ -99,70 +110,58 @@ export default function App() {
   const isOS = dataflow === 'output_stationary'
   const diePpuCount = catalog?.hardware.die_ppu_count ?? DIE_PPU_COUNT
 
-  const resetSimState = useCallback(() => {
-    setPlaying(false)
-    setStarted(false)
-    setSnapshots([])
-    setResponse(null)
-    setSelected(null)
-    setFocusedPpu(null)
-    setFocusedCore(null)
-    setFocusedArray(null)
-    setMicroSnap(null)
-    setPpuMemory(null)
-    setCoreMemoryPeak(null)
-    setPpuMemoryPeak(null)
-    setPpuCores(null)
+  const clearViewCaches = useCallback(() => {
     microCache.current.clear()
     ppuGridCache.current.clear()
     ppuMemoryCache.current.clear()
     coreMemoryPeakCache.current.clear()
     ppuMemoryPeakCache.current.clear()
-    setFrameIndex(0)
   }, [])
 
-  const handleRunGemm = useCallback(async (modelId: string, gemmId: string, flow: DataflowType) => {
-    setLoading(true)
-    setError(null)
-    resetSimState()
+  const activateView = useCallback((entry: SimCacheEntry, flow: DataflowType, gemmId: string) => {
+    clearViewCaches()
+    setPlaying(false)
+    setSelected(null)
+    setMicroSnap(null)
+    setPpuMemory(null)
+    setCoreMemoryPeak(null)
+    setPpuMemoryPeak(null)
+    setPpuCores(null)
+    setFrameIndex(0)
+    setResponse(entry.response)
+    setSnapshots(entry.snapshots)
+    setSelectedGemmId(gemmId)
 
-    try {
-      const res = await runModelSimulation({
-        model_id: modelId,
-        gemm_id: gemmId,
-        rows: ARRAY_ROWS,
-        cols: ARRAY_COLS,
-        dataflow: flow,
-      })
-      const snaps = await fetchAllSnapshots(res.sim_id)
-      setResponse(res)
-      setSnapshots(snaps)
-
-      if (flow === 'output_stationary') {
-        const ppu = firstActivePpu(snaps[0]?.die_ppuss)
-        setFocusedPpu(ppu)
-        if (ppu && res.tile_plan?.tiles?.length) {
-          const tile = res.tile_plan.tiles.find((t) => t.ppu_index === ppu.index) ?? res.tile_plan.tiles[0]
-          if (tile.core_row != null && tile.core_col != null) {
-            setFocusedCore({ row: tile.core_row, col: tile.core_col })
-          }
+    if (flow === 'output_stationary') {
+      const ppu = firstActivePpu(entry.snapshots[0]?.die_ppuss)
+      setFocusedPpu(ppu)
+      if (ppu && entry.response.tile_plan?.tiles?.length) {
+        const tile = entry.response.tile_plan.tiles.find((t) => t.ppu_index === ppu.index)
+          ?? entry.response.tile_plan.tiles[0]
+        if (tile.core_row != null && tile.core_col != null) {
+          setFocusedCore({ row: tile.core_row, col: tile.core_col })
+        } else {
+          setFocusedCore(null)
         }
       } else {
-        const arr = firstActiveArray(snaps[0]?.macro_arrays)
-        setFocusedArray(arr)
+        setFocusedCore(null)
       }
-      setStarted(true)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unknown error')
-    } finally {
-      setLoading(false)
+      setFocusedArray(null)
+    } else {
+      const arr = firstActiveArray(entry.snapshots[0]?.macro_arrays)
+      setFocusedArray(arr)
+      setFocusedPpu(null)
+      setFocusedCore(null)
     }
-  }, [resetSimState])
+    setStarted(true)
+  }, [clearViewCaches])
 
-  const handleGemmSelect = useCallback((op: GemmOpInfo) => {
-    setSelectedGemmId(op.id)
-    void handleRunGemm(selectedModelId, op.id, dataflow)
-  }, [selectedModelId, dataflow, handleRunGemm])
+  const handleGemmSelect = useCallback((gemmId: string) => {
+    const key = simCacheKey(selectedModelId, gemmId, dataflow)
+    const entry = simCacheRef.current.get(key)
+    if (!entry) return
+    activateView(entry, dataflow, gemmId)
+  }, [selectedModelId, dataflow, activateView])
 
   useEffect(() => {
     fetchModels()
@@ -173,6 +172,82 @@ export default function App() {
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load models'))
   }, [])
+
+  useEffect(() => {
+    if (!catalog) return
+
+    const model = catalog.models.find((m) => m.id === selectedModelId) ?? catalog.models[0]
+    if (!model) return
+
+    let cancelled = false
+    setInitLoading(true)
+    setStarted(false)
+    setError(null)
+
+    const pendingStats = Object.fromEntries(
+      model.gemm_ops.map((op) => [op.id, { totalCycles: null, pending: true } satisfies GemmSimStat]),
+    )
+    setGemmStats(pendingStats)
+
+    async function preloadAll() {
+      const viewGemmId = selectedGemmIdRef.current ?? catalog!.default_gemm_id
+      let firstReady: SimCacheEntry | null = null
+      let firstReadyId = viewGemmId
+
+      for (const op of model.gemm_ops) {
+        if (cancelled) return
+        const key = simCacheKey(model.id, op.id, dataflow)
+        try {
+          const res = await runModelSimulation({
+            model_id: model.id,
+            gemm_id: op.id,
+            rows: ARRAY_ROWS,
+            cols: ARRAY_COLS,
+            dataflow,
+          })
+          const snaps = await fetchAllSnapshots(res.sim_id)
+          if (cancelled) return
+          const entry: SimCacheEntry = { response: res, snapshots: snaps }
+          simCacheRef.current.set(key, entry)
+          setGemmStats((prev) => ({
+            ...prev,
+            [op.id]: { totalCycles: res.total_cycles },
+          }))
+          if (!firstReady) {
+            firstReady = entry
+            firstReadyId = op.id
+          }
+          if (op.id === viewGemmId) {
+            firstReady = entry
+            firstReadyId = op.id
+          }
+        } catch (e) {
+          if (cancelled) return
+          const message = e instanceof Error ? e.message : 'Simulation failed'
+          setGemmStats((prev) => ({
+            ...prev,
+            [op.id]: { totalCycles: null, error: message },
+          }))
+        }
+      }
+
+      if (cancelled) return
+
+      setInitLoading(false)
+      const preferredKey = simCacheKey(model.id, viewGemmId, dataflow)
+      const preferred = simCacheRef.current.get(preferredKey)
+      if (preferred) {
+        activateView(preferred, dataflow, viewGemmId)
+      } else if (firstReady) {
+        activateView(firstReady, dataflow, firstReadyId)
+      }
+    }
+
+    void preloadAll()
+    return () => {
+      cancelled = true
+    }
+  }, [catalog, selectedModelId, dataflow, activateView])
 
   useEffect(() => {
     if (!playing || snapshots.length === 0) return
@@ -204,7 +279,8 @@ export default function App() {
         setMicroSnap(null)
         return
       }
-      tileKey = coreTileKey(focusedPpu.index, focusedCore)
+      const waveIdx = waveIndexFromSnapshot(snap)
+      tileKey = coreTileKey(waveIdx, focusedPpu.index, focusedCore)
     } else {
       if (!focusedArray) {
         setMicroSnap(null)
@@ -217,7 +293,8 @@ export default function App() {
     const tileCycles = tileMeta
       ? tileCycleCount(tileMeta)
       : (response.total_cycles ?? snapshots.length)
-    const clamped = snap.cycle >= tileCycles
+    const waveLocal = waveLocalCycleFromSnapshot(snap)
+    const clamped = waveLocal >= tileCycles
     const cacheKey = `${response.sim_id}:${snap.cycle}:${tileKey}`
     const cached = microCache.current.get(cacheKey)
     if (cached) {
@@ -317,7 +394,7 @@ export default function App() {
         setCoreMemoryPeak(null)
         return
       }
-      tileKey = coreTileKey(focusedPpu.index, focusedCore)
+      tileKey = coreTileKey(waveIndexFromSnapshot(snap), focusedPpu.index, focusedCore)
     } else {
       if (!focusedArray) {
         setCoreMemoryPeak(null)
@@ -385,7 +462,7 @@ export default function App() {
 
   const ppuCoresForView = isOS ? ppuCores : snap?.macro_arrays
   const ppuViewStats = isOS && focusedPpu
-    ? summarizePpuView(focusedPpu.index, ppuCoresForView, focusedCore, tilePlan)
+    ? summarizePpuView(focusedPpu.index, ppuCoresForView, focusedCore, tilePlan, waveIndexFromSnapshot(snap))
     : null
 
   const logicDieUtil = response?.dims
@@ -427,13 +504,9 @@ export default function App() {
             selectedModelId={selectedModelId}
             selectedGemmId={selectedGemmId}
             dataflow={dataflow}
-            loading={loading}
-            onModelSelect={(id) => {
-              setSelectedModelId(id)
-              const model = catalog?.models.find((m) => m.id === id)
-              const firstGemm = model?.gemm_ops[0]
-              if (firstGemm) setSelectedGemmId(firstGemm.id)
-            }}
+            initLoading={initLoading}
+            gemmStats={gemmStats}
+            onModelSelect={setSelectedModelId}
             onGemmSelect={handleGemmSelect}
             onDataflowChange={setDataflow}
           />
@@ -467,6 +540,9 @@ export default function App() {
                       {tilePlan && (
                         <span className="viz-badge accent">
                           {tilePlan.active_ppu_count ?? 0} / {diePpuCount} PPU
+                          {(tilePlan.wave_count ?? 1) > 1 && (
+                            <> · Wave {(snap?.progress?.wave_index as number ?? 0) + 1}/{tilePlan.wave_count}</>
+                          )}
                         </span>
                       )}
                     </div>

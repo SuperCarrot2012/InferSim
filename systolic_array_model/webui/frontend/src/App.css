@@ -232,22 +232,98 @@ html {
 }
 
 .model-btn-group,
-.gemm-btn-group {
+.gemm-list {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
   margin-bottom: 0.75rem;
 }
 
-.model-btn,
-.gemm-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.15rem;
+.init-hint {
+  margin-top: -0.25rem;
+  margin-bottom: 0.5rem;
+  color: var(--accent);
+}
+
+.gemm-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.gemm-card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.25);
+}
+
+.gemm-card.error {
+  border-color: rgba(248, 113, 113, 0.45);
+}
+
+.gemm-card-head {
   width: 100%;
   text-align: left;
-  padding: 0.5rem 0.65rem;
+  padding: 0.45rem 0.65rem;
+  font-weight: 600;
+  font-size: 0.82rem;
+  border: none;
+  border-radius: 0;
+  background: var(--surface2);
+}
+
+.gemm-card.selected .gemm-card-head {
+  background: rgba(34, 211, 238, 0.1);
+  color: var(--accent);
+}
+
+.gemm-card-body {
+  padding: 0.45rem 0.65rem 0.5rem;
+  font-size: 0.72rem;
+}
+
+.gemm-card-dims {
+  display: flex;
+  gap: 0.65rem;
+  color: var(--muted);
+  margin-bottom: 0.3rem;
+}
+
+.gemm-card-waves {
+  color: var(--accent);
+  margin-bottom: 0.25rem;
+}
+
+.gemm-card-cycles {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding-top: 0.35rem;
+  border-top: 1px solid rgba(42, 53, 72, 0.5);
+}
+
+.gemm-card-cycles .gemm-detail-val {
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.gemm-card-cycles .gemm-detail-val.accent {
+  color: var(--accent);
+}
+
+.model-btn {
+  width: 100%;
+  text-align: left;
+  padding: 0.45rem 0.65rem;
+  font-weight: 600;
+  font-size: 0.82rem;
+}
+
+.gemm-detail-key {
+  font-size: 0.68rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .model-btn.active,
@@ -257,22 +333,18 @@ html {
   box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.25);
 }
 
-.gemm-btn.warn:not(.active) {
-  border-color: rgba(251, 191, 36, 0.45);
-}
-
-.gemm-label {
-  font-weight: 600;
-  font-size: 0.82rem;
-}
-
-.gemm-dims {
-  font-size: 0.7rem;
-  color: var(--muted);
+.gemm-detail-meta {
+  font-size: 0.72rem;
+  color: var(--accent);
+  margin-bottom: 0.35rem;
 }
 
 .warn-text {
   color: var(--warning);
+}
+
+.accent-text {
+  color: var(--accent);
 }
 
 button {
@@ -525,7 +597,16 @@ button.primary.full {
   flex-wrap: nowrap;
   padding: 0.35rem 0;
   font-size: 0.82rem;
-  border-bottom: 1px solid rgba(42, 53, 72, 0.5);
+}
+
+.stat-row + .stat-row,
+.stat-row.section-start {
+  border-top: 1px solid rgba(42, 53, 72, 0.5);
+}
+
+.stat-row.section-start {
+  margin-top: 0.15rem;
+  padding-top: 0.5rem;
 }
 
 .stat-row .label {
@@ -565,14 +646,21 @@ button.primary.full {
   color: var(--accent2);
 }
 
-.logic-die-view-panel .stat-row:last-of-type {
-  border-bottom: none;
-}
-
 .logic-die-util {
   font-size: 1.05rem;
   font-weight: 700;
   color: var(--accent2);
+}
+
+.logic-die-peak {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15rem;
+  line-height: 1.35;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--accent);
 }
 
 .logic-die-util-detail {
@@ -605,11 +693,6 @@ button.primary.full {
 
 .ppu-view-label {
   font-size: 0.78rem;
-}
-
-.ppu-view-divider {
-  margin: 0.35rem 0;
-  border-top: 1px solid rgba(42, 53, 72, 0.5);
 }
 
 .ppu-view-hint {
@@ -652,6 +735,11 @@ button.primary.full {
   margin-top: 0.55rem;
   padding-top: 0.55rem;
   border-top: 1px solid rgba(42, 53, 72, 0.5);
+}
+
+.stat-row + .memory-subpanel,
+.stat-row + .pe-detail {
+  margin-top: 0.15rem;
 }
 
 .memory-subpanel h5,

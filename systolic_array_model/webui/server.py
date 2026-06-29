@@ -48,7 +48,7 @@ _ppu_grid_cache: dict[str, list[dict[str, Any]]] = {}
 class SimulateRequest(BaseModel):
     m: int = Field(ge=1, le=64)
     k: int = Field(ge=1, le=OS_K_MAX)
-    n: int = Field(ge=1, le=OS_N_MAX)
+    n: int = Field(ge=1, le=262144)
     rows: int = Field(default=16, ge=1, le=64)
     cols: int = Field(default=16, ge=1, le=64)
     dataflow: str = Field(default="output_stationary")

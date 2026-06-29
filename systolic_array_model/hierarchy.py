@@ -22,6 +22,8 @@ CORE_PE = 16
 
 OS_M_MAX = CORE_PE
 OS_N_MAX = DIE_PPU_COUNT * PPU_CORE_COUNT * CORE_PE  # 32 × 16 × 16 = 8192
+# Max N columns mappable on Logic Die in one wave.
+OS_N_WAVE_MAX = OS_N_MAX
 # OS: K streams through each core (no spatial K tiling); API upper bound only.
 OS_K_MAX = 65536
 
@@ -41,10 +43,11 @@ class CoreTile:
     local_m: int
     local_k: int
     local_n: int
+    wave_index: int = 0
 
     @property
     def key(self) -> str:
-        return f"{self.ppu_index},{self.core_row},{self.core_col}"
+        return f"{self.wave_index},{self.ppu_index},{self.core_row},{self.core_col}"
 
     def to_dict(self) -> dict:
         return {
@@ -61,6 +64,7 @@ class CoreTile:
             "local_m": self.local_m,
             "local_k": self.local_k,
             "local_n": self.local_n,
+            "wave_index": self.wave_index,
             "total_cycles": compute_cycle_count(self.local_m, self.local_k, self.local_n),
         }
 
@@ -76,13 +80,19 @@ class LogicDiePlan:
     pe_cols: int = CORE_PE
     dataflow: str = DataflowType.OUTPUT_STATIONARY.value
     tiles: list[CoreTile] = field(default_factory=list)
+    waves: list[dict] = field(default_factory=list)
+    wave_count: int = 1
 
     @property
     def active_core_count(self) -> int:
+        if self.waves:
+            return max(w["active_count"] for w in self.waves)
         return len(self.tiles)
 
     @property
     def active_ppu_count(self) -> int:
+        if self.waves:
+            return max(w["active_ppu_count"] for w in self.waves)
         return len({t.ppu_index for t in self.tiles})
 
     def to_dict(self) -> dict:
@@ -97,6 +107,9 @@ class LogicDiePlan:
             "dataflow": self.dataflow,
             "active_count": self.active_core_count,
             "active_ppu_count": self.active_ppu_count,
+            "wave_count": self.wave_count,
+            "os_n_wave_max": OS_N_WAVE_MAX,
+            "waves": self.waves,
             "tiles": [t.to_dict() for t in self.tiles],
         }
 
@@ -105,17 +118,35 @@ def _ppu_coords(ppu_index: int) -> tuple[int, int]:
     return ppu_index // DIE_PPU_COLS, ppu_index % DIE_PPU_COLS
 
 
+def os_n_wave_chunks(n: int, *, pe_cols: int = CORE_PE) -> list[tuple[int, int]]:
+    """Split global N into sequential waves that each fit on one Logic Die."""
+    max_per_wave = DIE_PPU_COUNT * PPU_CORE_COUNT * pe_cols
+    chunks: list[tuple[int, int]] = []
+    n0 = 0
+    while n0 < n:
+        wave_n = min(max_per_wave, n - n0)
+        chunks.append((n0, wave_n))
+        n0 += wave_n
+    return chunks
+
+
+def os_n_wave_count(n: int, *, pe_cols: int = CORE_PE) -> int:
+    return len(os_n_wave_chunks(n, pe_cols=pe_cols))
+
+
 def compute_os_logic_die_plan(
     m: int,
     k: int,
     n: int,
     *,
+    n0: int = 0,
+    wave_index: int = 0,
     pe_cols: int = CORE_PE,
 ) -> LogicDiePlan:
     """OS: M must fit in one core (1–16); split N across cores then PPUs.
 
-    Priority: partition N into 16-wide slices mapped to systolic cores inside
-    each PPU (4×4), then spill to additional PPUs on the Logic Die (4×8).
+    ``n`` is the column count for this wave; ``n0`` is the global N offset.
+    When total N exceeds ``OS_N_WAVE_MAX``, run multiple waves via ``os_n_wave_chunks``.
     """
     if m < 1 or m > OS_M_MAX:
         raise ValueError(
@@ -137,7 +168,7 @@ def compute_os_logic_die_plan(
         core_idx = slice_idx % PPU_CORE_COUNT
         core_row, core_col = divmod(core_idx, PPU_CORE_GRID)
         ppu_row, ppu_col = _ppu_coords(ppu_index)
-        n0 = slice_idx * pe_cols
+        slice_n0 = slice_idx * pe_cols
 
         tiles.append(
             CoreTile(
@@ -148,10 +179,11 @@ def compute_os_logic_die_plan(
                 core_col=core_col,
                 m0=0,
                 k0=0,
-                n0=n0,
+                n0=n0 + slice_n0,
                 local_m=m,
                 local_k=k,
-                local_n=min(pe_cols, n - n0),
+                local_n=min(pe_cols, n - slice_n0),
+                wave_index=wave_index,
             )
         )
 

@@ -53,8 +53,36 @@ def result_to_dict(result: SimResult) -> dict[str, Any]:
 
 def _tile_key_from_dict(tile: dict[str, Any]) -> str:
     if "ppu_index" in tile:
-        return f"{tile['ppu_index']},{tile['core_row']},{tile['core_col']}"
+        wave = tile.get("wave_index", 0)
+        return f"{wave},{tile['ppu_index']},{tile['core_row']},{tile['core_col']}"
     return f"{tile['grid_row']},{tile['grid_col']}"
+
+
+def _wave_local_cycle(tile_plan: dict[str, Any], global_cycle: int) -> tuple[int, int]:
+    """Return (wave_index, local_cycle) for a global timeline cycle."""
+    waves = tile_plan.get("waves") or []
+    if not waves:
+        return 0, global_cycle
+    for wave in waves:
+        start = int(wave["cycle_start"])
+        end = int(wave["cycle_end"])
+        if start <= global_cycle < end:
+            return int(wave["wave_index"]), global_cycle - start
+    last = waves[-1]
+    wave_idx = int(last["wave_index"])
+    local = max(0, global_cycle - int(last["cycle_start"]))
+    end = int(last["cycle_end"])
+    if global_cycle >= end:
+        local = max(0, end - 1 - int(last["cycle_start"]))
+    return wave_idx, local
+
+
+def _tiles_for_wave(tile_plan: dict[str, Any], wave_index: int) -> list[dict[str, Any]]:
+    return [
+        t
+        for t in tile_plan.get("tiles", [])
+        if int(t.get("wave_index", 0)) == wave_index
+    ]
 
 
 def _find_tile(tile_plan: dict[str, Any], tile_key: str) -> dict[str, Any]:
@@ -72,15 +100,18 @@ def render_micro_snapshot(
     """Re-run one tile up to ``cycle`` and capture its Systolic Core View snapshot."""
     tile = _find_tile(result.tile_plan, tile_key)
     config = ArrayConfig.from_dict(result.config)
+    wave_idx, local_cycle = _wave_local_cycle(result.tile_plan, cycle)
+    if int(tile.get("wave_index", 0)) != wave_idx:
+        local_cycle = 0
+
     total = compute_cycle_count(tile["local_m"], tile["local_k"], tile["local_n"])
     if total <= 0:
         raise IndexError(f"Tile {tile_key} has no compute cycles")
-    if cycle < 0:
-        raise IndexError(f"Cycle {cycle} out of range [0, {total})")
+    if local_cycle < 0:
+        raise IndexError(f"Cycle {local_cycle} out of range [0, {total})")
 
     engine = CycleEngine(config)
-    if cycle >= total:
-        # Post-compute drain: W/A have left PEs; only P coords remain.
+    if local_cycle >= total:
         return engine.snapshot_after_drain(
             tile["local_m"],
             tile["local_k"],
@@ -94,7 +125,7 @@ def render_micro_snapshot(
         tile["local_m"],
         tile["local_k"],
         tile["local_n"],
-        cycle,
+        local_cycle,
         m0=tile["m0"],
         k0=tile["k0"],
         n0=tile["n0"],
@@ -131,6 +162,7 @@ def render_ppu_core_grid(
     cycle: int,
 ) -> list[list[dict[str, object]]]:
     """Synthesize one PPU's 4×4 core grid at a global cycle (no bulk snapshot storage)."""
+    wave_idx, local_cycle = _wave_local_cycle(result.tile_plan, cycle)
     grid: list[list[dict[str, object]]] = [
         [
             MacroArrayState(active=False, grid_row=r, grid_col=c).to_dict()
@@ -139,14 +171,14 @@ def render_ppu_core_grid(
         for r in range(PPU_CORE_GRID)
     ]
 
-    for tile in result.tile_plan.get("tiles", []):
+    for tile in _tiles_for_wave(result.tile_plan, wave_idx):
         if tile.get("ppu_index") != ppu_index:
             continue
         cr, cc = tile["core_row"], tile["core_col"]
         tile_cycles = compute_cycle_count(
             tile["local_m"], tile["local_k"], tile["local_n"]
         )
-        computing = cycle < tile_cycles
+        computing = local_cycle < tile_cycles
         grid[cr][cc] = MacroArrayState(
             active=True,
             computing=computing,
@@ -171,13 +203,14 @@ def aggregate_ppu_memory(
     cycle: int,
 ) -> dict[str, object]:
     """Sum per-cycle memory traffic across all active systolic cores in one PPU."""
+    wave_idx, local_cycle = _wave_local_cycle(result.tile_plan, cycle)
     tiles = [
         t
-        for t in result.tile_plan.get("tiles", [])
+        for t in _tiles_for_wave(result.tile_plan, wave_idx)
         if t.get("ppu_index") == ppu_index
     ]
     if not tiles:
-        raise KeyError(f"PPU {ppu_index} has no tiles")
+        raise KeyError(f"PPU {ppu_index} has no tiles in wave {wave_idx}")
 
     total: dict[str, int | str | dict[str, int]] | None = None
     contributing = 0
@@ -186,10 +219,10 @@ def aggregate_ppu_memory(
         tile_cycles = compute_cycle_count(
             tile["local_m"], tile["local_k"], tile["local_n"]
         )
-        if cycle >= tile_cycles:
+        if local_cycle >= tile_cycles:
             continue
 
-        mem = _tile_memory_at_cycle(result, tile, cycle)
+        mem = _tile_memory_at_cycle(result, tile, local_cycle)
         total = mem if total is None else merge_memory_access(total, mem)
         contributing += 1
 
@@ -212,7 +245,10 @@ def peak_core_memory(result: SimResult, tile_key: str) -> dict[str, object]:
 def peak_ppu_memory(result: SimResult, ppu_index: int) -> dict[str, object]:
     """Peak per-cycle aggregated memory bandwidth across one PPU."""
     memories: list[dict[str, object]] = []
-    for cycle in range(result.total_cycles):
-        mem = aggregate_ppu_memory(result, ppu_index, cycle)
-        memories.append(mem)
+    for wave in result.tile_plan.get("waves") or [{"cycle_start": 0, "cycle_end": result.total_cycles}]:
+        start = int(wave["cycle_start"])
+        end = int(wave["cycle_end"])
+        for cycle in range(start, end):
+            mem = aggregate_ppu_memory(result, ppu_index, cycle)
+            memories.append(mem)
     return peak_memory_access(memories)

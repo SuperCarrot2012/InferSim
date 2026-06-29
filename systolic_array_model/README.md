@@ -1,26 +1,45 @@
-# systolic_array_model
+# 脉动阵列仿真器
 
-基于 `systolic_array` 的模型驱动脉动阵列仿真器：按 LLM 推理 GEMM 算子选择参数，可视化 OS/WS 数据流。
+面向 LLM 推理 GEMM 的脉动阵列周期级仿真器，提供 Web 可视化界面。选择模型与算子后自动填入 M×K×N 参数，展示 Logic Die → PPU → Systolic Core 三层视图及 SRAM 访存统计。
 
-## 与 systolic_array 的差异
+## 硬件层次
 
-| 项 | systolic_array | systolic_array_model |
-|---|---|---|
-| 标题 | InferSim 脉动阵列仿真器 | **脉动阵列仿真器** |
-| 左侧面板 | 手动输入 M/K/N | **模型 + GEMM 按钮**（当前 Llama3-8B） |
-| 默认数据流 | — | **部分和驻留 (OS)**，可下拉切换 |
-| Logic Die PPU | 48 (6×8) | **32 (4×8)** |
-| 存储模型 | 通用访存统计 | **SRAM only**（不含 DDR） |
+```
+Logic Die (4×8 = 32 PPU)
+  └── PPU (4×4 = 16 Core)
+        └── Systolic Core (16×16 PE)
+```
 
-## Llama3-8B GEMM 列表
+- **OS（部分和驻留）**：M ≤ 16，K 流式输入，N 在 Core / PPU 间切分；单 wave 最多 8192 列，N 更大时自动分 wave 串行计算
+- **WS（权重驻留）**：4×4 Tensor Core 阵列，K ≤ 64，N ≤ 16
+- **存储**：所有 Load/Store 均经 SRAM，不建模 DDR 层级
 
-Decode 单步 (batch=1, seq=1, tp=1)：
+## Web 界面
 
-- Q_Proj、K_Proj、V_Proj、O_Proj
-- Gate_Proj、Up_Proj、Down_Proj
-- LM_Head
+左侧面板选择 **模型** 与 **GEMM 算子**，数据流默认 OS，可切换 WS。点击算子即开始仿真；右侧状态检查器展示利用率、SRAM 带宽（W/A/C 分项）及 PE 寄存器状态。
 
-部分大 N 算子（Gate/Up/LM_Head）超出单 Die 32 PPU 容量时会报错；UI 会标注所需 PPU 数。
+访存符号约定（GEMM **C = A × W**）：
+
+| 符号 | 含义 | 方向 |
+|------|------|------|
+| W | 权重 | 读 |
+| A | 激活 | 读 |
+| C | 输出 | 写 |
+
+## 内置模型
+
+### Llama3-8B（decode，batch=1，seq=1，tp=1）
+
+| 算子 | 典型形状 M×K×N | 说明 |
+|------|----------------|------|
+| Q/O_Proj | 1×4096×4096 | Q_Proj · O_Proj |
+| K/V_Proj | 1×4096×1024 | K_Proj · V_Proj |
+| Gate_Proj | 1×4096×14336 | |
+| Up_Proj | 1×4096×14336 | |
+| Down_Proj | 1×14336×4096 | |
+| LM_Head | 1×4096×128256 | |
+
+N 超过 8192 时按 wave 分批，每 wave 最多占用 32 PPU，各 wave 串行执行；总周期为各 wave 周期之和。
 
 ## 启动
 
@@ -32,9 +51,27 @@ cd systolic_array_model/webui/frontend && npm install && npm run build
 bash systolic_array_model/webui/run.sh
 ```
 
-浏览器打开 http://127.0.0.1:8766 ，选择 GEMM 算子即开始仿真。
+浏览器访问 http://127.0.0.1:8766
 
 ## API
 
-- `GET /api/models` — 模型与 GEMM 目录
-- `POST /api/simulate/model` — `{ model_id, gemm_id, dataflow }`
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/models` | 模型与 GEMM 目录 |
+| POST | `/api/simulate/model` | 按模型算子仿真，body: `{ model_id, gemm_id, dataflow }` |
+| GET | `/api/simulate/{sim_id}/snapshots` | 宏观周期快照 |
+| GET | `/api/simulate/{sim_id}/micro/{cycle}` | Core 级微观快照 |
+
+## 目录结构
+
+```
+systolic_array_model/
+├── hierarchy.py          # Logic Die 切分与约束
+├── logic_die_engine.py   # OS 多 PPU 仿真引擎
+├── memory.py             # SRAM 访存模型
+├── models/registry.py    # 模型 GEMM 参数表
+└── webui/
+    ├── server.py         # FastAPI 服务
+    ├── run.sh
+    └── frontend/         # React 可视化
+```

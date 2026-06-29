@@ -89,6 +89,17 @@ export interface TilePlan {
   dataflow: string
   active_count: number
   active_ppu_count?: number
+  wave_count?: number
+  os_n_wave_max?: number
+  waves?: Array<{
+    wave_index: number
+    n0: number
+    wave_n: number
+    cycle_start: number
+    cycle_end: number
+    active_count: number
+    active_ppu_count: number
+  }>
   tiles: Array<{
     ppu_index?: number
     ppu_row?: number
@@ -97,6 +108,7 @@ export interface TilePlan {
     core_col?: number
     grid_row?: number
     grid_col?: number
+    wave_index?: number
     m0: number
     k0: number
     n0: number
@@ -137,6 +149,17 @@ export interface SimulateResponse {
   tile_plan?: TilePlan
 }
 
+export interface GemmSimStat {
+  totalCycles: number | null
+  pending?: boolean
+  error?: string
+}
+
+export interface SimCacheEntry {
+  response: SimulateResponse
+  snapshots: CycleSnapshot[]
+}
+
 export interface GemmOpInfo {
   id: string
   label: string
@@ -145,6 +168,7 @@ export interface GemmOpInfo {
   n: number
   note: string
   ppus_needed: number
+  wave_count: number
   fits_die: boolean
 }
 
@@ -164,6 +188,7 @@ export interface ModelCatalog {
     os_m_max: number
     os_k_max: number
     os_n_max: number
+    os_n_wave_max: number
     memory: string
   }
 }
