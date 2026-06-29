@@ -1,12 +1,12 @@
-"""Processing Element (MAC unit) for weight-stationary systolic array."""
+"""MAC unit model for weight-stationary and output-stationary systolic arrays."""
 
 from __future__ import annotations
 
-from systolic_array_model.types import PEPhase
+from systolic_array_model.types import MacPhase
 
 
-class ProcessingElement:
-    """Stateless MAC: stationary weight, pass-through activation and psum."""
+class MacUnit:
+    """Single MAC unit: performs one multiply-accumulate per active cycle."""
 
     __slots__ = (
         "row",
@@ -29,7 +29,7 @@ class ProcessingElement:
         self.row = row
         self.col = col
         self.weight: float | None = None
-        self.phase: PEPhase = PEPhase.IDLE
+        self.phase: MacPhase = MacPhase.IDLE
         self.act_in: float | None = None
         self.act_out: float | None = None
         self.weight_in: float | None = None
@@ -43,7 +43,7 @@ class ProcessingElement:
 
     def reset(self) -> None:
         self.weight = None
-        self.phase = PEPhase.IDLE
+        self.phase = MacPhase.IDLE
         self.act_in = None
         self.act_out = None
         self.weight_in = None
@@ -57,15 +57,15 @@ class ProcessingElement:
 
     def load_weight(self) -> None:
         self.weight = 1.0
-        self.phase = PEPhase.LOAD_WEIGHT
+        self.phase = MacPhase.LOAD_WEIGHT
 
     def load_psum(self, m: int, c: int) -> None:
         self.psum_out = 0.0
         self.p_coord = [m, c]
-        self.phase = PEPhase.LOAD_PSUM
+        self.phase = MacPhase.LOAD_PSUM
 
     def begin_compute(self) -> None:
-        self.phase = PEPhase.COMPUTE
+        self.phase = MacPhase.COMPUTE
 
     def step(self, act_in: float | None, psum_in: float) -> tuple[float | None, float]:
         """WS: stationary weight, pass activation right and psum down."""

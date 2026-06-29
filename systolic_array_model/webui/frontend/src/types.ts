@@ -28,7 +28,7 @@ export interface MacroArrayState {
 
 export interface MicroTileSnapshot {
   phase: string
-  pes: PESnapshot[][]
+  macs: MacSnapshot[][]
   left_inject: (string | null)[]
   top_inject?: (string | null)[]
   bottom_output: (string | null)[]
@@ -37,7 +37,7 @@ export interface MicroTileSnapshot {
   memory?: MemoryAccess
 }
 
-export interface PESnapshot {
+export interface MacSnapshot {
   row: number
   col: number
   phase: string
@@ -60,11 +60,11 @@ export interface LinkAnim {
   direction: 'right' | 'down'
 }
 
-/** Macro-only per-cycle snapshot (Logic Die / PPU views); PE grid fetched on demand. */
+/** Macro-only per-cycle snapshot (Logic Die / PPU views); MAC grid fetched on demand. */
 export interface CycleSnapshot {
   cycle: number
   phase: string
-  pes: PESnapshot[][]
+  macs: MacSnapshot[][]
   left_inject: (string | null)[]
   top_inject?: (string | null)[]
   bottom_output: (string | null)[]
@@ -84,8 +84,8 @@ export interface TilePlan {
   ppu_core_grid?: number
   grid_rows?: number
   grid_cols?: number
-  pe_rows: number
-  pe_cols: number
+  mac_rows: number
+  mac_cols: number
   dataflow: string
   active_count: number
   active_ppu_count?: number

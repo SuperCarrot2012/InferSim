@@ -6,7 +6,7 @@ import math
 from dataclasses import dataclass, field
 
 from systolic_array_model.hierarchy import (
-    CORE_PE,
+    CORE_MAC,
     DIE_PPU_COUNT,
     OS_K_MAX,
     OS_M_MAX,
@@ -36,7 +36,7 @@ class GemmOp:
 
     def ppus_needed(self) -> int:
         """PPUs used in the busiest wave."""
-        n_slices = math.ceil(min(self.n, DIE_PPU_COUNT * PPU_CORE_COUNT * CORE_PE) / CORE_PE)
+        n_slices = math.ceil(min(self.n, DIE_PPU_COUNT * PPU_CORE_COUNT * CORE_MAC) / CORE_MAC)
         return math.ceil(n_slices / PPU_CORE_COUNT)
 
     def to_dict(self) -> dict:
@@ -107,8 +107,8 @@ def get_models_catalog() -> dict:
             "die_ppu_count": DIE_PPU_COUNT,
             "os_m_max": OS_M_MAX,
             "os_k_max": OS_K_MAX,
-            "os_n_max": DIE_PPU_COUNT * PPU_CORE_COUNT * CORE_PE,
-            "os_n_wave_max": DIE_PPU_COUNT * PPU_CORE_COUNT * CORE_PE,
+            "os_n_max": DIE_PPU_COUNT * PPU_CORE_COUNT * CORE_MAC,
+            "os_n_wave_max": DIE_PPU_COUNT * PPU_CORE_COUNT * CORE_MAC,
             "memory": "sram_only",
         },
     }

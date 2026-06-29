@@ -11,7 +11,7 @@ from systolic_array_model.types import CycleSnapshot, DataflowType, SimPhase
 
 
 class OutputStationaryDataflow(DataflowStrategy):
-    """OS GEMM: PE(m,c) holds P[m,c]; A streams right, W streams down."""
+    """OS GEMM: MAC(m,c) holds P[m,c]; A streams right, W streams down."""
 
     def __init__(self, config: ArrayConfig) -> None:
         self.config = config
@@ -239,7 +239,7 @@ class OutputStationaryDataflow(DataflowStrategy):
         return CycleSnapshot(
             cycle=cycle,
             phase=phase.value,
-            pes=array.capture_pes_full(m, n, os_mode=True),
+            macs=array.capture_macs_full(m, n, os_mode=True),
             left_inject=left_padded,
             top_inject=top_padded,
             bottom_output=[None] * array.cols,

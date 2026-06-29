@@ -7,7 +7,7 @@
 ```
 Logic Die (4×8 = 32 PPU)
   └── PPU (4×4 = 16 Core)
-        └── Systolic Core (16×16 PE)
+        └── Systolic Core (16×16 MAC)
 ```
 
 - **OS（部分和驻留）**：M ≤ 16，K 流式输入，N 在 Core / PPU 间切分；单 wave 最多 8192 列，N 更大时自动分 wave 串行计算
@@ -16,7 +16,7 @@ Logic Die (4×8 = 32 PPU)
 
 ## Web 界面
 
-左侧面板选择 **模型** 与 **GEMM 算子**，数据流默认 OS，可切换 WS。点击算子即开始仿真；右侧状态检查器展示利用率、SRAM 带宽（W/A/C 分项）及 PE 寄存器状态。
+左侧面板选择 **模型** 与 **GEMM 算子**，数据流默认 OS，可切换 WS。点击算子即开始仿真；右侧状态检查器展示利用率、SRAM 带宽（W/A/C 分项）及 MAC 单元寄存器状态。
 
 访存符号约定（GEMM **C = A × W**）：
 
@@ -68,10 +68,11 @@ bash systolic_array_model/webui/run.sh
 systolic_array_model/
 ├── hierarchy.py          # Logic Die 切分与约束
 ├── logic_die_engine.py   # OS 多 PPU 仿真引擎
+├── mac.py / array.py     # MAC 单元与脉动阵列
 ├── memory.py             # SRAM 访存模型
 ├── models/registry.py    # 模型 GEMM 参数表
 └── webui/
     ├── server.py         # FastAPI 服务
     ├── run.sh
-    └── frontend/         # React 可视化
+    └── frontend/         # React 可视化（MacGrid 等）
 ```

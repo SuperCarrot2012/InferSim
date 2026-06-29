@@ -26,7 +26,7 @@ import { ControlBar } from './components/ControlBar'
 import { Inspector } from './components/Inspector'
 import { LogicDieGrid } from './components/LogicDieGrid'
 import { MacroGrid } from './components/MacroGrid'
-import { PEGrid } from './components/PEGrid'
+import { MacGrid } from './components/MacGrid'
 import { deriveMemoryAccess } from './memory'
 import { emptySnapshot } from './emptySnapshot'
 import {
@@ -59,7 +59,7 @@ function microToCycleSnapshot(
   return {
     cycle: macro.cycle,
     phase: micro.phase,
-    pes: micro.pes,
+    macs: micro.macs,
     left_inject: micro.left_inject,
     top_inject: micro.top_inject,
     bottom_output: micro.bottom_output,
@@ -469,8 +469,8 @@ export default function App() {
     ? computeHierarchyUtilization(response.dims, totalCycles, simDataflow)
     : null
 
-  const selectedPE =
-    microSnap && selected ? microSnap.pes[selected.row]?.[selected.col] ?? null : null
+  const selectedMac =
+    microSnap && selected ? microSnap.macs[selected.row]?.[selected.col] ?? null : null
   const gridSnapshot = microSnap ?? EMPTY_GRID
 
   const coreViewContext = (() => {
@@ -593,7 +593,7 @@ export default function App() {
                       </span>
                     )}
                   </div>
-                  <PEGrid
+                  <MacGrid
                     snapshot={gridSnapshot}
                     gridRows={ARRAY_ROWS}
                     gridCols={ARRAY_COLS}
@@ -615,7 +615,7 @@ export default function App() {
                       </span>
                     )}
                   </div>
-                  <PEGrid
+                  <MacGrid
                     snapshot={gridSnapshot}
                     gridRows={ARRAY_ROWS}
                     gridCols={ARRAY_COLS}
@@ -650,7 +650,7 @@ export default function App() {
         <aside className="inspector-panel">
           {started && microSnap && (
             <Inspector
-              pe={selectedPE}
+              mac={selectedMac}
               phase={microSnap.phase}
               dataflow={simDataflow}
               memory={deriveMemoryAccess(microSnap)}

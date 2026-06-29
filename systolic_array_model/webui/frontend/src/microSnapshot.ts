@@ -2,8 +2,8 @@ import type { MacroArrayState, TilePlan } from './types'
 
 export const DIE_PPU_COUNT = 32
 export const PPU_CORE_COUNT = 16
-export const CORE_PE = 16
-const PE_PER_CORE = CORE_PE * CORE_PE
+export const CORE_MAC = 16
+const MACS_PER_CORE = CORE_MAC * CORE_MAC
 
 export const TC_GRID = 4
 
@@ -66,8 +66,8 @@ export function computeHierarchyUtilization(
   const actualMacs = dims.m * dims.k * dims.n
   const isOS = dataflow === 'output_stationary'
   const peakMacsPerCycle = isOS
-    ? DIE_PPU_COUNT * PPU_CORE_COUNT * PE_PER_CORE
-    : TC_GRID * TC_GRID * PE_PER_CORE
+    ? DIE_PPU_COUNT * PPU_CORE_COUNT * MACS_PER_CORE
+    : TC_GRID * TC_GRID * MACS_PER_CORE
   const capacityMacs = peakMacsPerCycle * totalCycles
   const utilization = capacityMacs > 0 ? actualMacs / capacityMacs : 0
   const macsPerCycle = actualMacs / totalCycles

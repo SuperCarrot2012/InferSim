@@ -88,7 +88,7 @@ def _merge_os_snapshots(
             CycleSnapshot(
                 cycle=global_cycle,
                 phase="compute" if any_computing else "done",
-                pes=[],
+                macs=[],
                 left_inject=[],
                 top_inject=[],
                 bottom_output=[],
@@ -112,13 +112,13 @@ def _merge_os_snapshots(
 
 
 class LogicDieEngine:
-    """Simulate OS GEMM on Logic Die hierarchy (32 PPU × 16 core × 16×16 PE)."""
+    """Simulate OS GEMM on Logic Die hierarchy (32 PPU × 16 core × 16×16 MAC)."""
 
     def __init__(self, config: ArrayConfig) -> None:
         self.config = config
 
     def run(self, m: int, k: int, n: int) -> SimResult:
-        chunks = os_n_wave_chunks(n, pe_cols=self.config.cols)
+        chunks = os_n_wave_chunks(n, mac_cols=self.config.cols)
         wave_count = len(chunks)
 
         all_snapshots: list[CycleSnapshot] = []
@@ -133,7 +133,7 @@ class LogicDieEngine:
                 wave_n,
                 n0=n0,
                 wave_index=wave_index,
-                pe_cols=self.config.cols,
+                mac_cols=self.config.cols,
             )
             tile_cycles = {
                 tile.key: compute_cycle_count(tile.local_m, tile.local_k, tile.local_n)
@@ -165,7 +165,7 @@ class LogicDieEngine:
             all_tiles.extend(plan.tiles)
 
         combined = LogicDiePlan(
-            pe_cols=self.config.cols,
+            mac_cols=self.config.cols,
             tiles=all_tiles,
             waves=wave_metas,
             wave_count=wave_count,

@@ -12,7 +12,7 @@ class DataflowType(str, Enum):
     OUTPUT_STATIONARY = "output_stationary"
 
 
-class PEPhase(str, Enum):
+class MacPhase(str, Enum):
     IDLE = "idle"
     LOAD_WEIGHT = "load_weight"
     LOAD_PSUM = "load_psum"
@@ -30,7 +30,7 @@ class SimPhase(str, Enum):
 
 @dataclass
 class LinkAnim:
-    """Animated data movement between PEs for one cycle."""
+    """Animated data movement between MAC units for one cycle."""
 
     from_row: int
     from_col: int
@@ -41,7 +41,8 @@ class LinkAnim:
 
 
 @dataclass
-class PESnapshot:
+class MacSnapshot:
+    """State of one MAC unit (single multiply-accumulate) in the systolic grid."""
     row: int
     col: int
     phase: str
@@ -59,7 +60,7 @@ class PESnapshot:
 class CycleSnapshot:
     cycle: int
     phase: str
-    pes: list[list[PESnapshot]]
+    macs: list[list[MacSnapshot]]
     left_inject: list[str | None]
     bottom_output: list[str | None]
     active_links: list[LinkAnim]
@@ -130,24 +131,24 @@ class SimResult:
 def _micro_tile_to_dict(snapshot: CycleSnapshot) -> dict[str, Any]:
     return {
         "phase": snapshot.phase,
-        "pes": [
+        "macs": [
             [
                 {
-                    "row": pe.row,
-                    "col": pe.col,
-                    "phase": pe.phase,
-                    "w_coord": pe.w_coord,
-                    "a_coord": pe.a_coord,
-                    "p_coord": pe.p_coord,
-                    "has_act": pe.has_act,
-                    "has_weight": pe.has_weight,
-                    "has_psum": pe.has_psum,
-                    "writeback": pe.writeback,
-                    "in_tile": pe.in_tile,
+                    "row": mac.row,
+                    "col": mac.col,
+                    "phase": mac.phase,
+                    "w_coord": mac.w_coord,
+                    "a_coord": mac.a_coord,
+                    "p_coord": mac.p_coord,
+                    "has_act": mac.has_act,
+                    "has_weight": mac.has_weight,
+                    "has_psum": mac.has_psum,
+                    "writeback": mac.writeback,
+                    "in_tile": mac.in_tile,
                 }
-                for pe in row
+                for mac in row
             ]
-            for row in snapshot.pes
+            for row in snapshot.macs
         ],
         "left_inject": snapshot.left_inject,
         "top_inject": snapshot.top_inject,
@@ -171,7 +172,7 @@ def _micro_tile_to_dict(snapshot: CycleSnapshot) -> dict[str, Any]:
 def build_micro_store(
     tile_runs: list[tuple[Any, list[CycleSnapshot]]],
 ) -> dict[str, list[CycleSnapshot]]:
-    """Per-tile full PE snapshots, keyed by tile.key (on-demand fetch)."""
+    """Per-tile full MAC unit snapshots, keyed by tile.key (on-demand fetch)."""
     store: dict[str, list[CycleSnapshot]] = {}
     for tile, snaps in tile_runs:
         store[tile.key] = snaps
@@ -195,24 +196,24 @@ def _snapshot_to_dict(snapshot: CycleSnapshot) -> dict[str, Any]:
     d: dict[str, Any] = {
         "cycle": snapshot.cycle,
         "phase": snapshot.phase,
-        "pes": [
+        "macs": [
             [
                 {
-                    "row": pe.row,
-                    "col": pe.col,
-                    "phase": pe.phase,
-                    "w_coord": pe.w_coord,
-                    "a_coord": pe.a_coord,
-                    "p_coord": pe.p_coord,
-                    "has_act": pe.has_act,
-                    "has_weight": pe.has_weight,
-                    "has_psum": pe.has_psum,
-                    "writeback": pe.writeback,
-                    "in_tile": pe.in_tile,
+                    "row": mac.row,
+                    "col": mac.col,
+                    "phase": mac.phase,
+                    "w_coord": mac.w_coord,
+                    "a_coord": mac.a_coord,
+                    "p_coord": mac.p_coord,
+                    "has_act": mac.has_act,
+                    "has_weight": mac.has_weight,
+                    "has_psum": mac.has_psum,
+                    "writeback": mac.writeback,
+                    "in_tile": mac.in_tile,
                 }
-                for pe in row
+                for mac in row
             ]
-            for row in snapshot.pes
+            for row in snapshot.macs
         ],
         "left_inject": snapshot.left_inject,
         "top_inject": snapshot.top_inject,

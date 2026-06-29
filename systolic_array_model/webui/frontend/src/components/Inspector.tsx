@@ -1,4 +1,4 @@
-import type { PESnapshot } from '../types'
+import type { MacSnapshot } from '../types'
 import { coordLabel } from '../api'
 import type { MemoryAccess, MemoryPeakStats } from '../types'
 import { formatBytesPerCycle } from '../memory'
@@ -6,7 +6,7 @@ import type { LogicDieUtilStats, PpuViewStats } from '../microSnapshot'
 import { formatTflops } from '../microSnapshot'
 
 interface Props {
-  pe: PESnapshot | null
+  mac: MacSnapshot | null
   phase: string
   dataflow: string
   memory: MemoryAccess
@@ -19,7 +19,7 @@ interface Props {
 }
 
 export function Inspector({
-  pe,
+  mac,
   phase,
   dataflow,
   memory,
@@ -138,17 +138,17 @@ export function Inspector({
 
         <MemoryStatsPanel memory={memory} peak={memoryPeak} />
 
-        {pe ? (
-          <div className="pe-detail">
-            <h5>PE [{pe.row}, {pe.col}]</h5>
+        {mac ? (
+          <div className="mac-detail">
+            <h5>MAC单元 [{mac.row}, {mac.col}]</h5>
             <div className="register-grid">
-              <Register label="Weight (W)" coord={pe.w_coord} prefix="W" color="#a78bfa" />
-              <Register label="Activation (A)" coord={pe.a_coord} prefix="A" color="#38bdf8" />
-              <Register label="Partial Sum (P)" coord={pe.p_coord} prefix="P" color="#34d399" highlight />
+              <Register label="Weight (W)" coord={mac.w_coord} prefix="W" color="#a78bfa" />
+              <Register label="Activation (A)" coord={mac.a_coord} prefix="A" color="#38bdf8" />
+              <Register label="Partial Sum (P)" coord={mac.p_coord} prefix="P" color="#34d399" highlight />
             </div>
           </div>
         ) : (
-          <p className="hint core-view-hint">点击 Systolic Core View 网格选择 PE</p>
+          <p className="hint core-view-hint">点击 Systolic Core View 网格选择 MAC单元</p>
         )}
       </div>
 

@@ -573,7 +573,7 @@ button.primary.full {
   background: rgba(34, 211, 238, 0.08);
 }
 
-.pe-grid-svg,
+.mac-grid-svg,
 .macro-grid-svg {
   display: block;
   flex-shrink: 0;
@@ -738,12 +738,12 @@ button.primary.full {
 }
 
 .stat-row + .memory-subpanel,
-.stat-row + .pe-detail {
+.stat-row + .mac-detail {
   margin-top: 0.15rem;
 }
 
 .memory-subpanel h5,
-.pe-detail h5 {
+.mac-detail h5 {
   font-size: 0.78rem;
   margin-bottom: 0.4rem;
   color: var(--muted);
@@ -751,7 +751,7 @@ button.primary.full {
   letter-spacing: 0.04em;
 }
 
-.pe-detail {
+.mac-detail {
   margin-top: 0.65rem;
   padding-top: 0.55rem;
   border-top: 1px solid rgba(42, 53, 72, 0.5);
@@ -819,7 +819,7 @@ button.primary.full {
   font-family: var(--mono);
 }
 
-.pe-detail h5 {
+.mac-detail h5 {
   font-size: 0.85rem;
   margin-bottom: 0.5rem;
   color: var(--pink);

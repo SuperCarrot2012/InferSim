@@ -7,7 +7,7 @@ export function idleMicroTile(
 ): MicroTileSnapshot {
   return {
     phase: 'done',
-    pes: Array.from({ length: rows }, (_, r) =>
+    macs: Array.from({ length: rows }, (_, r) =>
       Array.from({ length: cols }, (_, c) => ({
         row: r,
         col: c,
@@ -34,7 +34,7 @@ export function emptySnapshot(rows: number, cols: number): CycleSnapshot {
   return {
     cycle: 0,
     phase: 'idle',
-    pes: Array.from({ length: rows }, (_, r) =>
+    macs: Array.from({ length: rows }, (_, r) =>
       Array.from({ length: cols }, (_, c) => ({
         row: r,
         col: c,

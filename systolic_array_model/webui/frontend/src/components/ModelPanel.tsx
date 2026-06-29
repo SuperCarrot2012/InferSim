@@ -113,7 +113,7 @@ export function ModelPanel({
           </>
         ) : (
           <>
-            <strong>WS：</strong>4×4 阵列，每块 16×16 PE<br />
+            <strong>WS：</strong>4×4 阵列，每块 16×16 MAC<br />
             <strong>存储：</strong>SRAM only<br />
             <strong>约束：</strong>K ≤ 64，N ≤ 16
           </>

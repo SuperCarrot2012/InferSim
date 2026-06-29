@@ -1,4 +1,4 @@
-"""TPU compute hierarchy: Logic Die → PPU → Systolic Core → PE."""
+"""TPU compute hierarchy: Logic Die → PPU → Systolic Core → MAC unit."""
 
 from __future__ import annotations
 
@@ -18,10 +18,10 @@ PPU_CORE_GRID = 4
 PPU_CORE_COUNT = PPU_CORE_GRID * PPU_CORE_GRID  # 16
 
 # Layer 3 — Systolic Core
-CORE_PE = 16
+CORE_MAC = 16
 
-OS_M_MAX = CORE_PE
-OS_N_MAX = DIE_PPU_COUNT * PPU_CORE_COUNT * CORE_PE  # 32 × 16 × 16 = 8192
+OS_M_MAX = CORE_MAC
+OS_N_MAX = DIE_PPU_COUNT * PPU_CORE_COUNT * CORE_MAC  # 32 × 16 × 16 = 8192
 # Max N columns mappable on Logic Die in one wave.
 OS_N_WAVE_MAX = OS_N_MAX
 # OS: K streams through each core (no spatial K tiling); API upper bound only.
@@ -76,8 +76,8 @@ class LogicDiePlan:
     die_rows: int = DIE_PPU_ROWS
     die_cols: int = DIE_PPU_COLS
     ppu_core_grid: int = PPU_CORE_GRID
-    pe_rows: int = CORE_PE
-    pe_cols: int = CORE_PE
+    mac_rows: int = CORE_MAC
+    mac_cols: int = CORE_MAC
     dataflow: str = DataflowType.OUTPUT_STATIONARY.value
     tiles: list[CoreTile] = field(default_factory=list)
     waves: list[dict] = field(default_factory=list)
@@ -102,8 +102,8 @@ class LogicDiePlan:
             "die_cols": self.die_cols,
             "ppu_count": DIE_PPU_COUNT,
             "ppu_core_grid": self.ppu_core_grid,
-            "pe_rows": self.pe_rows,
-            "pe_cols": self.pe_cols,
+            "mac_rows": self.mac_rows,
+            "mac_cols": self.mac_cols,
             "dataflow": self.dataflow,
             "active_count": self.active_core_count,
             "active_ppu_count": self.active_ppu_count,
@@ -118,9 +118,9 @@ def _ppu_coords(ppu_index: int) -> tuple[int, int]:
     return ppu_index // DIE_PPU_COLS, ppu_index % DIE_PPU_COLS
 
 
-def os_n_wave_chunks(n: int, *, pe_cols: int = CORE_PE) -> list[tuple[int, int]]:
+def os_n_wave_chunks(n: int, *, mac_cols: int = CORE_MAC) -> list[tuple[int, int]]:
     """Split global N into sequential waves that each fit on one Logic Die."""
-    max_per_wave = DIE_PPU_COUNT * PPU_CORE_COUNT * pe_cols
+    max_per_wave = DIE_PPU_COUNT * PPU_CORE_COUNT * mac_cols
     chunks: list[tuple[int, int]] = []
     n0 = 0
     while n0 < n:
@@ -130,8 +130,8 @@ def os_n_wave_chunks(n: int, *, pe_cols: int = CORE_PE) -> list[tuple[int, int]]
     return chunks
 
 
-def os_n_wave_count(n: int, *, pe_cols: int = CORE_PE) -> int:
-    return len(os_n_wave_chunks(n, pe_cols=pe_cols))
+def os_n_wave_count(n: int, *, mac_cols: int = CORE_MAC) -> int:
+    return len(os_n_wave_chunks(n, mac_cols=mac_cols))
 
 
 def compute_os_logic_die_plan(
@@ -141,7 +141,7 @@ def compute_os_logic_die_plan(
     *,
     n0: int = 0,
     wave_index: int = 0,
-    pe_cols: int = CORE_PE,
+    mac_cols: int = CORE_MAC,
 ) -> LogicDiePlan:
     """OS: M must fit in one core (1–16); split N across cores then PPUs.
 
@@ -153,7 +153,7 @@ def compute_os_logic_die_plan(
             f"OS mode: M must be in [1, {OS_M_MAX}], got M={m}"
         )
 
-    n_slices = math.ceil(n / pe_cols)
+    n_slices = math.ceil(n / mac_cols)
     ppus_needed = math.ceil(n_slices / PPU_CORE_COUNT)
 
     if ppus_needed > DIE_PPU_COUNT:
@@ -168,7 +168,7 @@ def compute_os_logic_die_plan(
         core_idx = slice_idx % PPU_CORE_COUNT
         core_row, core_col = divmod(core_idx, PPU_CORE_GRID)
         ppu_row, ppu_col = _ppu_coords(ppu_index)
-        slice_n0 = slice_idx * pe_cols
+        slice_n0 = slice_idx * mac_cols
 
         tiles.append(
             CoreTile(
@@ -182,9 +182,9 @@ def compute_os_logic_die_plan(
                 n0=n0 + slice_n0,
                 local_m=m,
                 local_k=k,
-                local_n=min(pe_cols, n - slice_n0),
+                local_n=min(mac_cols, n - slice_n0),
                 wave_index=wave_index,
             )
         )
 
-    return LogicDiePlan(pe_cols=pe_cols, tiles=tiles)
+    return LogicDiePlan(mac_cols=mac_cols, tiles=tiles)

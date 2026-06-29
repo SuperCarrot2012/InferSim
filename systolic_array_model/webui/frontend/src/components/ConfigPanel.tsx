@@ -72,8 +72,8 @@ const DATAFLOW_LABELS = {
   weight_stationary: '权重驻留 (WS)',
 } as const
 
-function osTileHint(n: number, pe: number): string {
-  const nSlices = Math.ceil(n / pe)
+function osTileHint(n: number, macCols: number): string {
+  const nSlices = Math.ceil(n / macCols)
   const ppus = Math.ceil(nSlices / 16)
   const cores = nSlices
   if (cores === 1) return '1 Core · 1 PPU'
@@ -138,7 +138,7 @@ export function ConfigPanel({
           </>
         ) : (
           <>
-            <strong>WS：</strong>4×4 阵列，每块 {arrayRows}×{arrayCols} PE<br />
+            <strong>WS：</strong>4×4 阵列，每块 {arrayRows}×{arrayCols} MAC<br />
             <strong>约束：</strong>K ≤ {arrayRows}，N ≤ {arrayCols}
             {tilePlan && (
               <>

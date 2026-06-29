@@ -80,7 +80,7 @@ def _merge_snapshots(
             CycleSnapshot(
                 cycle=cycle,
                 phase="compute" if any_computing else "done",
-                pes=[],
+                macs=[],
                 left_inject=[],
                 top_inject=[],
                 bottom_output=[],
@@ -109,8 +109,8 @@ class TensorCoreEngine:
             k,
             n,
             self.config.dataflow,
-            pe_rows=self.config.rows,
-            pe_cols=self.config.cols,
+            mac_rows=self.config.rows,
+            mac_cols=self.config.cols,
             grid=TC_GRID,
         )
 

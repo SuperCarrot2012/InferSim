@@ -11,8 +11,8 @@ export function deriveMemoryAccess(snapshot: CycleSnapshot): MemoryAccess {
     return snapshot.memory
   }
 
-  const k = Number(snapshot.progress.k ?? snapshot.pes.length)
-  const n = Number(snapshot.progress.n ?? snapshot.pes[0]?.length ?? 0)
+  const k = Number(snapshot.progress.k ?? snapshot.macs.length)
+  const n = Number(snapshot.progress.n ?? snapshot.macs[0]?.length ?? 0)
   const readActivation = snapshot.left_inject.filter(Boolean).length
   const writeOutput = snapshot.bottom_output.filter(Boolean).length
 

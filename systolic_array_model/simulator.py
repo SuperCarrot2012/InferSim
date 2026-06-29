@@ -27,7 +27,7 @@ def run_simulation(
 ) -> SimResult:
     """Run cycle-accurate GEMM dataflow simulation.
 
-    OS: Logic Die (32 PPU) → PPU (4×4 core) → Core (16×16 PE); M≤16, N split first.
+    OS: Logic Die (32 PPU) → PPU (4×4 core) → Core (16×16 MAC); M≤16, N split first.
     WS: unchanged 4×4 Tensor Core tiling.
     """
     if mac_latency != 1:

@@ -11,7 +11,7 @@ from systolic_array_model.types import CycleSnapshot, DataflowType, SimPhase
 
 
 class WeightStationaryDataflow(DataflowStrategy):
-    """WS GEMM: PE(r,c) holds W[r,c]; A streams with diagonal wavefront."""
+    """WS GEMM: MAC(r,c) holds W[r,c]; A streams with diagonal wavefront."""
 
     def __init__(self, config: ArrayConfig) -> None:
         self.config = config
@@ -60,9 +60,9 @@ class WeightStationaryDataflow(DataflowStrategy):
 
             bottom_labels: list[str | None] = [None] * n
             for c in range(n):
-                pe = array.pes[k - 1][c]
-                if pe.psum_out != 0.0 and pe.p_coord:
-                    bottom_labels[c] = f"P[{pe.p_coord[0]},{pe.p_coord[1]}]"
+                mac = array.macs[k - 1][c]
+                if mac.psum_out != 0.0 and mac.p_coord:
+                    bottom_labels[c] = f"P[{mac.p_coord[0]},{mac.p_coord[1]}]"
 
             snapshots.append(
                 self._make_snapshot(
@@ -126,9 +126,9 @@ class WeightStationaryDataflow(DataflowStrategy):
             if local_cycle == cycle:
                 bottom_labels: list[str | None] = [None] * n
                 for c in range(n):
-                    pe = array.pes[k - 1][c]
-                    if pe.psum_out != 0.0 and pe.p_coord:
-                        bottom_labels[c] = f"P[{pe.p_coord[0]},{pe.p_coord[1]}]"
+                    mac = array.macs[k - 1][c]
+                    if mac.psum_out != 0.0 and mac.p_coord:
+                        bottom_labels[c] = f"P[{mac.p_coord[0]},{mac.p_coord[1]}]"
 
                 return self._make_snapshot(
                     array,
@@ -174,7 +174,7 @@ class WeightStationaryDataflow(DataflowStrategy):
         return CycleSnapshot(
             cycle=cycle,
             phase=phase.value,
-            pes=array.capture_pes(k, n),
+            macs=array.capture_macs(k, n),
             left_inject=left_padded,
             top_inject=[],
             bottom_output=bottom_padded,

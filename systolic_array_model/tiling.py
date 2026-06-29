@@ -9,7 +9,7 @@ from systolic_array_model.cycles import compute_cycle_count
 from systolic_array_model.types import DataflowType
 
 TC_GRID = 4
-PE_TILE = 16
+MAC_TILE = 16
 
 
 @dataclass
@@ -47,8 +47,8 @@ class ArrayTile:
 class TensorCorePlan:
     grid_rows: int = TC_GRID
     grid_cols: int = TC_GRID
-    pe_rows: int = PE_TILE
-    pe_cols: int = PE_TILE
+    mac_rows: int = MAC_TILE
+    mac_cols: int = MAC_TILE
     dataflow: str = DataflowType.OUTPUT_STATIONARY.value
     tiles: list[ArrayTile] = field(default_factory=list)
 
@@ -60,8 +60,8 @@ class TensorCorePlan:
         return {
             "grid_rows": self.grid_rows,
             "grid_cols": self.grid_cols,
-            "pe_rows": self.pe_rows,
-            "pe_cols": self.pe_cols,
+            "mac_rows": self.mac_rows,
+            "mac_cols": self.mac_cols,
             "dataflow": self.dataflow,
             "active_count": self.active_count,
             "tiles": [t.to_dict() for t in self.tiles],
@@ -74,11 +74,11 @@ def compute_tile_plan(
     n: int,
     dataflow: DataflowType,
     *,
-    pe_rows: int = PE_TILE,
-    pe_cols: int = PE_TILE,
+    mac_rows: int = MAC_TILE,
+    mac_cols: int = MAC_TILE,
     grid: int = TC_GRID,
 ) -> TensorCorePlan:
-    """Split GEMM across up to grid×grid systolic arrays (each pe_rows×pe_cols PEs).
+    """Split GEMM across up to grid×grid systolic arrays (each mac_rows×mac_cols MAC units).
 
     OS: spatial tiling on M × N (K streams through each array).
     WS: spatial tiling on K × N (M streams through each array).
@@ -86,17 +86,17 @@ def compute_tile_plan(
     tiles: list[ArrayTile] = []
 
     if dataflow == DataflowType.OUTPUT_STATIONARY:
-        m_tiles = math.ceil(m / pe_rows)
-        n_tiles = math.ceil(n / pe_cols)
+        m_tiles = math.ceil(m / mac_rows)
+        n_tiles = math.ceil(n / mac_cols)
         if m_tiles > grid or n_tiles > grid:
             raise ValueError(
                 f"OS tile grid {m_tiles}×{n_tiles} exceeds {grid}×{grid} Tensor Core "
-                f"(M={m}, N={n}, tile {pe_rows}×{pe_cols})"
+                f"(M={m}, N={n}, tile {mac_rows}×{mac_cols})"
             )
         for mi in range(m_tiles):
             for ni in range(n_tiles):
-                m0 = mi * pe_rows
-                n0 = ni * pe_cols
+                m0 = mi * mac_rows
+                n0 = ni * mac_cols
                 tiles.append(
                     ArrayTile(
                         grid_row=mi,
@@ -104,23 +104,23 @@ def compute_tile_plan(
                         m0=m0,
                         k0=0,
                         n0=n0,
-                        local_m=min(pe_rows, m - m0),
+                        local_m=min(mac_rows, m - m0),
                         local_k=k,
-                        local_n=min(pe_cols, n - n0),
+                        local_n=min(mac_cols, n - n0),
                     )
                 )
     elif dataflow == DataflowType.WEIGHT_STATIONARY:
-        k_tiles = math.ceil(k / pe_rows)
-        n_tiles = math.ceil(n / pe_cols)
+        k_tiles = math.ceil(k / mac_rows)
+        n_tiles = math.ceil(n / mac_cols)
         if k_tiles > grid or n_tiles > grid:
             raise ValueError(
                 f"WS tile grid {k_tiles}×{n_tiles} exceeds {grid}×{grid} Tensor Core "
-                f"(K={k}, N={n}, tile {pe_rows}×{pe_cols})"
+                f"(K={k}, N={n}, tile {mac_rows}×{mac_cols})"
             )
         for ki in range(k_tiles):
             for ni in range(n_tiles):
-                k0 = ki * pe_rows
-                n0 = ni * pe_cols
+                k0 = ki * mac_rows
+                n0 = ni * mac_cols
                 tiles.append(
                     ArrayTile(
                         grid_row=ki,
@@ -129,16 +129,16 @@ def compute_tile_plan(
                         k0=k0,
                         n0=n0,
                         local_m=m,
-                        local_k=min(pe_rows, k - k0),
-                        local_n=min(pe_cols, n - n0),
+                        local_k=min(mac_rows, k - k0),
+                        local_n=min(mac_cols, n - n0),
                     )
                 )
     else:
         raise NotImplementedError(f"Tiling not implemented for {dataflow}")
 
     return TensorCorePlan(
-        pe_rows=pe_rows,
-        pe_cols=pe_cols,
+        mac_rows=mac_rows,
+        mac_cols=mac_cols,
         dataflow=dataflow.value,
         tiles=tiles,
     )

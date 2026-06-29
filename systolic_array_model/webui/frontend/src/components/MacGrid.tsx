@@ -1,10 +1,10 @@
 import { motion } from 'framer-motion'
-import type { CycleSnapshot, PESnapshot } from '../types'
+import type { CycleSnapshot, MacSnapshot } from '../types'
 import { coordLabel } from '../api'
 
-/** Fixed PE layout (px) — do not scale with viewport */
-export const PE_CELL = 104
-export const PE_GAP = 8
+/** Fixed MAC cell layout (px) — do not scale with viewport */
+export const MAC_CELL = 104
+export const MAC_GAP = 8
 const LEFT_PAD = 8
 const LEFT_LABEL_WIDTH = 120
 const INJECT_LANE = 44
@@ -14,8 +14,8 @@ const TOP_LABEL_HEIGHT = 28
 const TOP_INJECT_LANE = 44
 const MARGIN_Y = TOP_PAD + TOP_LABEL_HEIGHT + TOP_INJECT_LANE
 const FONT_SIZE = 20
-const PE_TEXT_PAD = 10
-const PE_FONT_MIN = 9
+const MAC_TEXT_PAD = 10
+const MAC_FONT_MIN = 9
 const LABEL_FS_MAX = 22
 const LABEL_FS_MIN = 7
 const MONO_CHAR_WIDTH = 0.58
@@ -30,7 +30,7 @@ function fitMonoFontSize(
   const size = maxWidth / (text.length * MONO_CHAR_WIDTH)
   return Math.max(minFs, Math.min(maxFs, Math.floor(size)))
 }
-const OUTPUT_GAP = PE_GAP
+const OUTPUT_GAP = MAC_GAP
 const OUTPUT_BOTTOM_MARGIN = 12
 
 function linkColor(label: string): string {
@@ -53,27 +53,27 @@ interface Props {
   onSelect: (row: number, col: number) => void
 }
 
-export function PEGrid({ snapshot, gridRows, gridCols, selected, onSelect }: Props) {
+export function MacGrid({ snapshot, gridRows, gridCols, selected, onSelect }: Props) {
   const activeRows = Number(snapshot.progress?.active_rows ?? gridRows)
   const activeCols = Number(snapshot.progress?.active_cols ?? gridCols)
   const isWS = String(snapshot.progress?.dataflow ?? '') === 'weight_stationary'
 
-  const gridContentH = gridRows * PE_CELL + (gridRows - 1) * PE_GAP
+  const gridContentH = gridRows * MAC_CELL + (gridRows - 1) * MAC_GAP
   const hasBottomOutput = snapshot.bottom_output.some(Boolean)
   const overlayBottomOutput = isWS && hasBottomOutput
 
-  const peX = (c: number) => MARGIN_X + c * (PE_CELL + PE_GAP)
-  const peY = (r: number) => MARGIN_Y + r * (PE_CELL + PE_GAP)
+  const macX = (c: number) => MARGIN_X + c * (MAC_CELL + MAC_GAP)
+  const macY = (r: number) => MARGIN_Y + r * (MAC_CELL + MAC_GAP)
 
   const fullActiveTile = activeRows >= gridRows
 
   const bottomLabelY = overlayBottomOutput
     ? fullActiveTile
-      ? peY(gridRows - 1) + PE_CELL + OUTPUT_GAP
-      : peY(activeRows) + PE_CELL / 2
+      ? macY(gridRows - 1) + MAC_CELL + OUTPUT_GAP
+      : macY(activeRows) + MAC_CELL / 2
     : MARGIN_Y + gridContentH + OUTPUT_GAP
 
-  const width = gridCols * (PE_CELL + PE_GAP) - PE_GAP + MARGIN_X + 16
+  const width = gridCols * (MAC_CELL + MAC_GAP) - MAC_GAP + MARGIN_X + 16
   const needsBottomPadding = hasBottomOutput && (!overlayBottomOutput || fullActiveTile)
   const height = needsBottomPadding
     ? bottomLabelY + LABEL_FS_MAX + OUTPUT_BOTTOM_MARGIN
@@ -87,7 +87,7 @@ export function PEGrid({ snapshot, gridRows, gridCols, selected, onSelect }: Pro
   return (
     <svg
       viewBox={`0 0 ${width} ${height}`}
-      className="pe-grid-svg"
+      className="mac-grid-svg"
       width={width}
       height={height}
     >
@@ -115,11 +115,11 @@ export function PEGrid({ snapshot, gridRows, gridCols, selected, onSelect }: Pro
 
       {snapshot.active_links.map((link, i) => {
         const color = linkColor(link.label)
-        const x2 = peX(link.to_col)
-        const y2 = peY(link.to_row) + PE_CELL / 2
+        const x2 = macX(link.to_col)
+        const y2 = macY(link.to_row) + MAC_CELL / 2
 
         if (link.direction === 'right') {
-          const x1 = link.from_col < 0 ? injectArrowX1 : peX(link.from_col) + PE_CELL
+          const x1 = link.from_col < 0 ? injectArrowX1 : macX(link.from_col) + MAC_CELL
           return (
             <motion.line
               key={`link-${i}`}
@@ -137,12 +137,12 @@ export function PEGrid({ snapshot, gridRows, gridCols, selected, onSelect }: Pro
           )
         }
 
-        const xCenter = x2 + PE_CELL / 2
+        const xCenter = x2 + MAC_CELL / 2
         const y1 =
           link.from_row < 0
             ? topInjectArrowY1
-            : peY(link.from_row) + PE_CELL
-        const yEnd = link.from_row < 0 ? peY(link.to_row) + 4 : y2 - 4
+            : macY(link.from_row) + MAC_CELL
+        const yEnd = link.from_row < 0 ? macY(link.to_row) + 4 : y2 - 4
 
         return (
           <motion.line
@@ -165,10 +165,10 @@ export function PEGrid({ snapshot, gridRows, gridCols, selected, onSelect }: Pro
         c < gridCols && label ? (
           <text
             key={`top-${c}`}
-            x={peX(c) + PE_CELL / 2}
+            x={macX(c) + MAC_CELL / 2}
             y={topLabelY}
             fill="#a78bfa"
-            fontSize={fitMonoFontSize(label, PE_CELL - 4)}
+            fontSize={fitMonoFontSize(label, MAC_CELL - 4)}
             fontFamily="JetBrains Mono"
             textAnchor="middle"
             dominantBaseline="middle"
@@ -183,7 +183,7 @@ export function PEGrid({ snapshot, gridRows, gridCols, selected, onSelect }: Pro
           <text
             key={`inject-${r}`}
             x={injectLabelX}
-            y={peY(r) + PE_CELL / 2}
+            y={macY(r) + MAC_CELL / 2}
             fill="#38bdf8"
             fontSize={fitMonoFontSize(label, LEFT_LABEL_WIDTH - 8)}
             fontFamily="JetBrains Mono"
@@ -195,13 +195,13 @@ export function PEGrid({ snapshot, gridRows, gridCols, selected, onSelect }: Pro
         ) : null
       )}
 
-      {snapshot.pes.map((row, r) =>
-        row.map((pe, c) => (
-          <PECell
+      {snapshot.macs.map((row, r) =>
+        row.map((mac, c) => (
+          <MacCell
             key={`${r}-${c}`}
-            pe={pe}
-            x={peX(c)}
-            y={peY(r)}
+            mac={mac}
+            x={macX(c)}
+            y={macY(r)}
             selected={selected?.row === r && selected?.col === c}
             onClick={() => onSelect(r, c)}
           />
@@ -213,10 +213,10 @@ export function PEGrid({ snapshot, gridRows, gridCols, selected, onSelect }: Pro
           c < activeCols && label ? (
             <text
               key={`out-${c}`}
-              x={peX(c) + PE_CELL / 2}
+              x={macX(c) + MAC_CELL / 2}
               y={bottomLabelY}
               fill="#fbbf24"
-              fontSize={fitMonoFontSize(label, PE_CELL - 4)}
+              fontSize={fitMonoFontSize(label, MAC_CELL - 4)}
               fontFamily="JetBrains Mono"
               textAnchor="middle"
               dominantBaseline={overlayBottomOutput && !fullActiveTile ? 'middle' : 'hanging'}
@@ -232,77 +232,77 @@ export function PEGrid({ snapshot, gridRows, gridCols, selected, onSelect }: Pro
   )
 }
 
-function fitPeFontSize(labels: string[]): number {
+function fitMacFontSize(labels: string[]): number {
   if (!labels.length) return FONT_SIZE
-  const innerWidth = PE_CELL - PE_TEXT_PAD * 2
-  return Math.min(...labels.map((l) => fitMonoFontSize(l, innerWidth, FONT_SIZE, PE_FONT_MIN)))
+  const innerWidth = MAC_CELL - MAC_TEXT_PAD * 2
+  return Math.min(...labels.map((l) => fitMonoFontSize(l, innerWidth, FONT_SIZE, MAC_FONT_MIN)))
 }
 
-function PECell({
-  pe,
+function MacCell({
+  mac,
   x,
   y,
   selected,
   onClick,
 }: {
-  pe: PESnapshot
+  mac: MacSnapshot
   x: number
   y: number
   selected: boolean
   onClick: () => void
 }) {
-  const idle = !pe.in_tile
+  const idle = !mac.in_tile
   const phaseColor = idle
     ? '#2a3548'
-    : pe.phase === 'load_weight' || pe.phase === 'load_psum'
+    : mac.phase === 'load_weight' || mac.phase === 'load_psum'
       ? '#a78bfa'
-      : pe.phase === 'compute'
+      : mac.phase === 'compute'
         ? '#22d3ee'
         : '#64748b'
 
-  const line1 = y + PE_CELL * 0.34
-  const line2 = y + PE_CELL * 0.58
-  const line3 = y + PE_CELL * 0.82
-  const macActive = !idle && pe.has_act && (pe.has_weight || !!pe.w_coord)
-  const borderColor = selected ? '#f472b6' : pe.writeback ? '#fbbf24' : phaseColor
+  const line1 = y + MAC_CELL * 0.34
+  const line2 = y + MAC_CELL * 0.58
+  const line3 = y + MAC_CELL * 0.82
+  const macActive = !idle && mac.has_act && (mac.has_weight || !!mac.w_coord)
+  const borderColor = selected ? '#f472b6' : mac.writeback ? '#fbbf24' : phaseColor
 
-  const wText = !idle && pe.w_coord ? coordLabel('W', pe.w_coord) : ''
-  const aText = !idle && pe.has_act && pe.a_coord ? coordLabel('A', pe.a_coord) : ''
-  const pText = !idle && pe.has_psum && pe.p_coord ? coordLabel('P', pe.p_coord) : ''
-  const labelFs = fitPeFontSize([wText, aText, pText].filter(Boolean))
+  const wText = !idle && mac.w_coord ? coordLabel('W', mac.w_coord) : ''
+  const aText = !idle && mac.has_act && mac.a_coord ? coordLabel('A', mac.a_coord) : ''
+  const pText = !idle && mac.has_psum && mac.p_coord ? coordLabel('P', mac.p_coord) : ''
+  const labelFs = fitMacFontSize([wText, aText, pText].filter(Boolean))
 
   return (
     <g onClick={onClick} style={{ cursor: idle ? 'default' : 'pointer' }}>
       <motion.rect
         x={x}
         y={y}
-        width={PE_CELL}
-        height={PE_CELL}
+        width={MAC_CELL}
+        height={MAC_CELL}
         rx={12}
         fill={idle ? '#0a0e17' : '#1e293b'}
         stroke={borderColor}
-        strokeWidth={selected || pe.writeback ? 4 : idle ? 1.5 : 3}
+        strokeWidth={selected || mac.writeback ? 4 : idle ? 1.5 : 3}
         filter={macActive ? 'url(#glow)' : undefined}
-        animate={{ strokeOpacity: pe.writeback ? [0.7, 1, 0.7] : macActive ? [0.6, 1, 0.6] : 1 }}
-        transition={{ repeat: pe.writeback || macActive ? Infinity : 0, duration: 1.2 }}
+        animate={{ strokeOpacity: mac.writeback ? [0.7, 1, 0.7] : macActive ? [0.6, 1, 0.6] : 1 }}
+        transition={{ repeat: mac.writeback || macActive ? Infinity : 0, duration: 1.2 }}
       />
-      {!idle && pe.w_coord && (
-        <text x={x + PE_CELL / 2} y={line1} fill="#a78bfa" fontSize={labelFs} fontFamily="JetBrains Mono" textAnchor="middle">
+      {!idle && mac.w_coord && (
+        <text x={x + MAC_CELL / 2} y={line1} fill="#a78bfa" fontSize={labelFs} fontFamily="JetBrains Mono" textAnchor="middle">
           {wText}
         </text>
       )}
-      {!idle && pe.has_act && pe.a_coord && (
-        <text x={x + PE_CELL / 2} y={line2} fill="#38bdf8" fontSize={labelFs} fontFamily="JetBrains Mono" textAnchor="middle">
+      {!idle && mac.has_act && mac.a_coord && (
+        <text x={x + MAC_CELL / 2} y={line2} fill="#38bdf8" fontSize={labelFs} fontFamily="JetBrains Mono" textAnchor="middle">
           {aText}
         </text>
       )}
-      {!idle && pe.has_psum && pe.p_coord && (
-        <text x={x + PE_CELL / 2} y={line3} fill="#34d399" fontSize={labelFs} fontFamily="JetBrains Mono" textAnchor="middle">
+      {!idle && mac.has_psum && mac.p_coord && (
+        <text x={x + MAC_CELL / 2} y={line3} fill="#34d399" fontSize={labelFs} fontFamily="JetBrains Mono" textAnchor="middle">
           {pText}
         </text>
       )}
-      {!idle && pe.writeback && (
-        <text x={x + PE_CELL - 6} y={y + 18} fill="#fbbf24" fontSize={14} fontFamily="JetBrains Mono" textAnchor="end">
+      {!idle && mac.writeback && (
+        <text x={x + MAC_CELL - 6} y={y + 18} fill="#fbbf24" fontSize={14} fontFamily="JetBrains Mono" textAnchor="end">
           ↓
         </text>
       )}
