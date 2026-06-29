@@ -236,6 +236,17 @@ html {
   min-width: 0;
 }
 
+.hardware-panel input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.hardware-panel input[type="number"]::-webkit-outer-spin-button,
+.hardware-panel input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 .hw-field-row {
   display: flex;
   align-items: center;
@@ -283,6 +294,33 @@ html {
 
 .hw-dataflow-section .config-field {
   margin-bottom: 0;
+}
+
+.hw-sim-actions {
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.85rem;
+  margin-bottom: 0;
+}
+
+.hw-sim-actions button.full {
+  width: 100%;
+}
+
+.hw-sim-actions button:disabled {
+  opacity: 0.72;
+  cursor: not-allowed;
+}
+
+.hw-stop-btn:not(:disabled) {
+  border-color: rgba(248, 113, 113, 0.55);
+  color: #fca5a5;
+}
+
+.hw-stop-btn:not(:disabled):hover {
+  border-color: var(--danger);
+  background: rgba(248, 113, 113, 0.1);
+  color: var(--danger);
 }
 
 .logic-die-sram {

@@ -9,9 +9,12 @@ const DATAFLOW_LABELS = {
 interface Props {
   preset: HardwarePreset
   dataflow: DataflowType
-  disabled?: boolean
+  simRunning: boolean
+  canStart: boolean
   onPresetChange: (patch: Partial<HardwarePreset>) => void
   onDataflowChange: (v: DataflowType) => void
+  onStartSimulation: () => void
+  onStopSimulation: () => void
 }
 
 function NumField({
@@ -55,10 +58,15 @@ function NumField({
 export function HardwarePanel({
   preset,
   dataflow,
-  disabled,
+  simRunning,
+  canStart,
   onPresetChange,
   onDataflowChange,
+  onStartSimulation,
+  onStopSimulation,
 }: Props) {
+  const panelLocked = simRunning
+
   return (
     <div className="config-panel hardware-panel">
       <h3>硬件参数</h3>
@@ -69,7 +77,7 @@ export function HardwarePanel({
         min={0.1}
         step={0.1}
         unit="GHz"
-        disabled={disabled}
+        disabled={panelLocked}
         onChange={(clockGhz) => onPresetChange({ clockGhz })}
       />
 
@@ -80,7 +88,7 @@ export function HardwarePanel({
           value={preset.ppuSramSizeKb}
           min={1}
           unit="KiB"
-          disabled={disabled}
+          disabled={panelLocked}
           onChange={(ppuSramSizeKb) => onPresetChange({ ppuSramSizeKb })}
         />
       </div>
@@ -93,7 +101,7 @@ export function HardwarePanel({
           min={1}
           step={1}
           unit="GB/s"
-          disabled={disabled}
+          disabled={panelLocked}
           onChange={(lpddrBandwidthGBps) => onPresetChange({ lpddrBandwidthGBps })}
         />
       </div>
@@ -103,13 +111,32 @@ export function HardwarePanel({
           数据流模式
           <select
             value={dataflow}
-            disabled={disabled}
+            disabled={panelLocked}
             onChange={(e) => onDataflowChange(e.target.value as DataflowType)}
           >
             <option value="output_stationary">{DATAFLOW_LABELS.output_stationary}</option>
             <option value="weight_stationary">{DATAFLOW_LABELS.weight_stationary}</option>
           </select>
         </label>
+      </div>
+
+      <div className="config-actions hw-sim-actions">
+        <button
+          type="button"
+          className="primary full"
+          disabled={!canStart || simRunning}
+          onClick={onStartSimulation}
+        >
+          开始仿真
+        </button>
+        <button
+          type="button"
+          className="full hw-stop-btn"
+          disabled={!simRunning}
+          onClick={onStopSimulation}
+        >
+          结束仿真
+        </button>
       </div>
     </div>
   )

@@ -148,6 +148,7 @@ export interface SimulateResponse {
   dims: { m: number; k: number; n: number }
   tile_plan?: TilePlan
   logic_die_sram_demand?: LogicDieSramDemand | null
+  logic_die_lpddr_schedule?: LogicDieLpddrSchedule | null
 }
 
 export interface GemmSimStat {
@@ -193,6 +194,45 @@ export interface LogicDieSramDemand {
   active_ppu_count: number
   die_ppu_count: number
   waves?: LogicDieSramWaveDemand[]
+}
+
+export interface LogicDieLpddrWaveSchedule {
+  wave_index: number
+  active_ppu_count: number
+  k_chunk: number
+  num_k_chunks: number
+  a_bytes: number
+  a_load_cycles: number
+  prefetch_cycles_total: number
+  compute_chunk_cycles_total: number
+  c_bytes: number
+  c_writeback_cycles: number
+  pipeline_cycles: number
+  compute_only_cycles: number
+  peak_lpddr_bytes_per_cycle: number
+  bottleneck: 'lpddr' | 'compute'
+  ppus?: Array<{
+    ppu_index: number
+    local_m: number
+    local_k: number
+    local_n: number
+    k_chunk: number
+    a_bytes: number
+    w_bytes: number
+    w_buf_bytes: number
+  }>
+}
+
+export interface LogicDieLpddrSchedule {
+  ppu_sram_size_kb: number
+  lpddr_bandwidth_gbps: number
+  clock_ghz: number
+  lpddr_bytes_per_cycle: number
+  double_buffer: boolean
+  compute_only_cycles: number
+  lpddr_aware_cycles: number
+  bottleneck: 'lpddr' | 'compute'
+  waves: LogicDieLpddrWaveSchedule[]
 }
 
 export interface ModelCatalog {

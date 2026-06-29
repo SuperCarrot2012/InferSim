@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from systolic_array_model.hierarchy import OS_K_MAX, OS_M_MAX, OS_N_MAX
+from systolic_array_model.memory_hierarchy import logic_die_lpddr_schedule
 from systolic_array_model.simulator import (
     aggregate_ppu_memory,
     logic_die_sram_bandwidth_demand,
@@ -65,6 +66,13 @@ class SimulateResponse(BaseModel):
     dims: dict[str, int]
     tile_plan: dict[str, Any] = Field(default_factory=dict)
     logic_die_sram_demand: dict[str, Any] | None = None
+    logic_die_lpddr_schedule: dict[str, Any] | None = None
+
+
+class HardwareConfig(BaseModel):
+    clock_ghz: float = Field(default=1.0, gt=0)
+    ppu_sram_size_kb: int = Field(default=256, ge=1)
+    lpddr_bandwidth_gbps: float = Field(default=256.0, gt=0)
 
 
 @app.get("/api/health")
@@ -85,6 +93,7 @@ class ModelSimulateRequest(BaseModel):
     dataflow: str = Field(default="output_stationary")
     mac_latency: int = Field(default=1, ge=1)
     weight_load_cycles: int = Field(default=1, ge=0)
+    hardware: HardwareConfig = Field(default_factory=HardwareConfig)
 
 
 def _execute_simulation(
@@ -97,6 +106,7 @@ def _execute_simulation(
     dataflow: str,
     mac_latency: int,
     weight_load_cycles: int,
+    hardware: HardwareConfig | None = None,
 ) -> SimulateResponse:
     try:
         flow = DataflowType(dataflow)
@@ -131,9 +141,22 @@ def _execute_simulation(
     sim_id = str(uuid.uuid4())
     _sim_cache[sim_id] = result
 
+    hw = hardware or HardwareConfig()
     sram_demand = None
+    lpddr_schedule = None
     if flow == DataflowType.OUTPUT_STATIONARY:
         sram_demand = logic_die_sram_bandwidth_demand(result)
+        try:
+            lpddr_schedule = logic_die_lpddr_schedule(
+                result.tile_plan,
+                result.dims,
+                compute_only_cycles=result.total_cycles,
+                ppu_sram_kb=hw.ppu_sram_size_kb,
+                lpddr_bandwidth_gbps=hw.lpddr_bandwidth_gbps,
+                clock_ghz=hw.clock_ghz,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return SimulateResponse(
         sim_id=sim_id,
@@ -142,6 +165,7 @@ def _execute_simulation(
         dims=result.dims,
         tile_plan=result.tile_plan,
         logic_die_sram_demand=sram_demand,
+        logic_die_lpddr_schedule=lpddr_schedule,
     )
 
 
@@ -161,6 +185,7 @@ def simulate_model(req: ModelSimulateRequest) -> SimulateResponse:
         dataflow=req.dataflow,
         mac_latency=req.mac_latency,
         weight_load_cycles=req.weight_load_cycles,
+        hardware=req.hardware,
     )
 
 

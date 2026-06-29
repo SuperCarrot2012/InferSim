@@ -54,7 +54,7 @@ export function formatFlopsPerSec(flops: number): string {
   return `${flops.toLocaleString(undefined, { maximumFractionDigits: 0 })} FLOP/s`
 }
 
-/** Actual MACs (M×K×N) / full hierarchy MAC slots over all simulation cycles. */
+/** Actual MACs (M×K×N) / full hierarchy MAC slots over wall-clock cycles (incl. LPDDR when provided). */
 export function computeHierarchyUtilization(
   dims: { m: number; k: number; n: number },
   totalCycles: number,

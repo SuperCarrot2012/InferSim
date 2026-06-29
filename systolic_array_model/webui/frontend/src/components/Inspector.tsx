@@ -4,7 +4,7 @@ import type { MemoryAccess, MemoryPeakStats } from '../types'
 import { formatBytesPerCycle, formatStorageBytes } from '../memory'
 import type { LogicDieUtilStats, PpuViewStats, CoreSelectionStats } from '../microSnapshot'
 import { formatTflops } from '../microSnapshot'
-import type { LogicDieSramDemand } from '../types'
+import type { LogicDieLpddrSchedule, LogicDieSramDemand } from '../types'
 import { bytesPerCycleToTbytesPerSec, formatTbytesPerSec } from '../memory'
 
 interface Props {
@@ -20,6 +20,7 @@ interface Props {
   coreViewContext?: string
   coreSelection?: CoreSelectionStats | null
   logicDieSramDemand?: LogicDieSramDemand | null
+  logicDieLpddrSchedule?: LogicDieLpddrSchedule | null
   currentWaveIndex?: number
   waveCount?: number
 }
@@ -37,6 +38,7 @@ export function Inspector({
   coreViewContext,
   coreSelection,
   logicDieSramDemand,
+  logicDieLpddrSchedule,
   currentWaveIndex = 0,
   waveCount = 1,
 }: Props) {
@@ -47,9 +49,17 @@ export function Inspector({
     done: '完成',
   }
 
-  const sramForWave =
-    logicDieSramDemand?.waves?.find((w) => w.wave_index === currentWaveIndex)
-    ?? logicDieSramDemand
+  const lpddrForWave =
+    logicDieLpddrSchedule?.waves?.find((w) => w.wave_index === currentWaveIndex)
+    ?? logicDieLpddrSchedule?.waves?.[0]
+
+  const ppuLpddr = lpddrForWave?.ppus?.find((p) => p.ppu_index === ppuView?.ppuIndex)
+
+  const activePpuCount = lpddrForWave?.active_ppu_count ?? 0
+  const ppuLpddrBytesPerCycle =
+    logicDieLpddrSchedule && activePpuCount > 0
+      ? logicDieLpddrSchedule.lpddr_bytes_per_cycle / activePpuCount
+      : null
 
   return (
     <div className="inspector">
@@ -62,31 +72,39 @@ export function Inspector({
             <span className="label">频率</span>
             <span className="value mono">{logicDieUtil.clockGhz} GHz</span>
           </div>
-          {sramForWave && sramForWave.logic_die_peak_bytes > 0 && (
+          {logicDieLpddrSchedule && (
             <>
+              <div className="stat-row section-start">
+                <span className="label">总 Cycle 数</span>
+                <span className="value mono">
+                  {logicDieLpddrSchedule.lpddr_aware_cycles.toLocaleString()}
+                </span>
+              </div>
+              <p className="logic-die-sram-detail mono">
+                其中计算 {logicDieLpddrSchedule.compute_only_cycles.toLocaleString()} cycle
+              </p>
               <div className="stat-row">
-                <span className="label">SRAM 带宽需求</span>
+                <span className="label">瓶颈</span>
+                <span className={`value mono ${logicDieLpddrSchedule.bottleneck === 'lpddr' ? 'accent' : ''}`}>
+                  {logicDieLpddrSchedule.bottleneck === 'lpddr' ? 'LPDDR' : 'Compute'}
+                </span>
+              </div>
+              <div className="stat-row">
+                <span className="label">LPDDR 峰值</span>
                 <span className="value mono logic-die-sram">
                   <span>
-                    {sramForWave.logic_die_peak_bytes.toLocaleString()} B/cycle
+                    {logicDieLpddrSchedule.lpddr_bytes_per_cycle.toLocaleString()} B/cycle
                   </span>
                   <span>
                     {formatTbytesPerSec(
                       bytesPerCycleToTbytesPerSec(
-                        sramForWave.logic_die_peak_bytes,
+                        logicDieLpddrSchedule.lpddr_bytes_per_cycle,
                         logicDieUtil.clockGhz,
                       ),
                     )}
                   </span>
                 </span>
               </div>
-              <p className="logic-die-sram-detail mono">
-                PPU 峰值 {sramForWave.per_ppu_peak_bytes.toLocaleString()} B/cycle ×{' '}
-                {sramForWave.active_ppu_count} 活跃 PPU
-                {waveCount > 1 && (
-                  <> · Wave {currentWaveIndex + 1}/{waveCount}</>
-                )}
-              </p>
             </>
           )}
           <div className="stat-row section-start">
@@ -139,11 +157,18 @@ export function Inspector({
                   M×K×N = {ppuView.ppuLocal.local_m}×{ppuView.ppuLocal.local_k}×{ppuView.ppuLocal.local_n}
                 </span>
               </div>
-              <div className="stat-row">
-                <span className="label">PPU 周期</span>
-                <span className="value mono">{ppuView.ppuLocal.total_cycles}</span>
-              </div>
               <SramCapacityPanel capacity={ppuView.ppuLocal.sramCapacity} />
+              {ppuLpddr && logicDieLpddrSchedule && lpddrForWave && ppuLpddrBytesPerCycle != null && (
+                <LpddrPrefetchPanel
+                  ppuLpddr={ppuLpddr}
+                  diePeakBytesPerCycle={logicDieLpddrSchedule.lpddr_bytes_per_cycle}
+                  activePpuCount={activePpuCount}
+                  ppuBytesPerCycle={ppuLpddrBytesPerCycle}
+                  numKChunks={lpddrForWave.num_k_chunks}
+                  waveIndex={currentWaveIndex}
+                  waveCount={waveCount}
+                />
+              )}
             </>
           )}
 
@@ -222,6 +247,60 @@ export function Inspector({
         {dataflow === 'weight_stationary' && (
           <div className="legend-item"><span className="dot" style={{ background: '#fbbf24' }} /> 底部输出坐标</div>
         )}
+      </div>
+    </div>
+  )
+}
+
+function LpddrPrefetchPanel({
+  ppuLpddr,
+  diePeakBytesPerCycle,
+  activePpuCount,
+  ppuBytesPerCycle,
+  numKChunks,
+  waveIndex,
+  waveCount,
+}: {
+  ppuLpddr: {
+    k_chunk: number
+    local_k: number
+    w_buf_bytes: number
+  }
+  diePeakBytesPerCycle: number
+  activePpuCount: number
+  ppuBytesPerCycle: number
+  numKChunks: number
+  waveIndex: number
+  waveCount: number
+}) {
+  return (
+    <div className="memory-subpanel sram-capacity-panel">
+      <h5>LPDDR → SRAM Prefetch</h5>
+      <div className="memory-dtype mono">
+        Double-buffer · A 全驻留 PPU SRAM
+        {waveCount > 1 && <> · Wave {waveIndex + 1}/{waveCount}</>}
+      </div>
+      <div className="memory-section-label">当前 PPU</div>
+      <div className="memory-stat">
+        <div className="memory-stat-label">LPDDR 带宽</div>
+        <div className="memory-stat-value mono read">
+          {ppuBytesPerCycle.toLocaleString()} B/cycle
+        </div>
+        <div className="memory-breakdown mono">
+          <span>
+            Die 峰值 {diePeakBytesPerCycle.toLocaleString()} B/cycle ÷ {activePpuCount} 活跃 PPU
+          </span>
+        </div>
+      </div>
+      <div className="memory-stat">
+        <div className="memory-stat-label">K 分块</div>
+        <div className="memory-stat-value mono">
+          {ppuLpddr.k_chunk} × {numKChunks}
+        </div>
+        <div className="memory-breakdown mono">
+          <span>K = {ppuLpddr.local_k.toLocaleString()}</span>
+          <span>每 buf {formatStorageBytes(ppuLpddr.w_buf_bytes)} W</span>
+        </div>
       </div>
     </div>
   )

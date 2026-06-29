@@ -24,11 +24,27 @@ export async function runModelSimulation(body: {
   rows: number
   cols: number
   dataflow: DataflowType
+  hardware?: {
+    clock_ghz: number
+    ppu_sram_size_kb: number
+    lpddr_bandwidth_gbps: number
+  }
 }): Promise<SimulateResponse> {
   const res = await fetch(`${API}/simulate/model`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...body, mac_latency: 1, weight_load_cycles: 1 }),
+    body: JSON.stringify({
+      ...body,
+      mac_latency: 1,
+      weight_load_cycles: 1,
+      hardware: body.hardware
+        ? {
+            clock_ghz: body.hardware.clock_ghz,
+            ppu_sram_size_kb: body.hardware.ppu_sram_size_kb,
+            lpddr_bandwidth_gbps: body.hardware.lpddr_bandwidth_gbps,
+          }
+        : undefined,
+    }),
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))

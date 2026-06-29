@@ -6,6 +6,7 @@ interface Props {
   selectedGemmId: string | null
   dataflow: DataflowType
   initLoading: boolean
+  simRunning: boolean
   gemmStats: Record<string, GemmSimStat>
   onModelSelect: (modelId: string) => void
   onGemmSelect: (gemmId: string) => void
@@ -15,9 +16,9 @@ function findModel(catalog: ModelCatalog | null, modelId: string): ModelInfo | n
   return catalog?.models.find((m) => m.id === modelId) ?? null
 }
 
-function formatCycles(stat: GemmSimStat | undefined, initLoading: boolean): string {
+function formatCycles(stat: GemmSimStat | undefined, simRunning: boolean): string {
   if (stat?.error) return '失败'
-  if (stat?.pending || initLoading) return '…'
+  if (stat?.pending || simRunning) return '…'
   if (stat?.totalCycles != null) return stat.totalCycles.toLocaleString()
   return '—'
 }
@@ -28,6 +29,7 @@ export function ModelPanel({
   selectedGemmId,
   dataflow,
   initLoading,
+  simRunning,
   gemmStats,
   onModelSelect,
   onGemmSelect,
@@ -35,6 +37,7 @@ export function ModelPanel({
   const model = findModel(catalog, selectedModelId)
   const hw = catalog?.hardware
   const isOS = dataflow === 'output_stationary'
+  const panelLocked = initLoading || simRunning
 
   return (
     <div className="config-panel model-panel">
@@ -47,7 +50,7 @@ export function ModelPanel({
             type="button"
             className={`model-btn${m.id === selectedModelId ? ' active' : ''}`}
             onClick={() => onModelSelect(m.id)}
-            disabled={initLoading}
+            disabled={panelLocked}
           >
             {m.label}
           </button>
@@ -61,8 +64,8 @@ export function ModelPanel({
       {model && (
         <>
           <h3 className="section-subhead">GEMM 运算</h3>
-          {initLoading && (
-            <p className="config-desc init-hint">初始化仿真中…</p>
+          {simRunning && (
+            <p className="config-desc init-hint">仿真进行中…</p>
           )}
           <div className="gemm-list">
             {model.gemm_ops.map((op) => {
@@ -74,7 +77,7 @@ export function ModelPanel({
                   op={op}
                   isOS={isOS}
                   selected={op.id === selectedGemmId}
-                  cyclesLabel={formatCycles(stat, !stat || !!stat.pending)}
+                  cyclesLabel={formatCycles(stat, !!stat?.pending)}
                   hasError={!!stat?.error}
                   disabled={!ready}
                   onSelect={() => onGemmSelect(op.id)}

@@ -13,6 +13,7 @@ import {
 import type {
   CycleSnapshot,
   DataflowType,
+  LogicDieLpddrSchedule,
   LogicDieSramDemand,
   MacroArrayState,
   MemoryAccess,
@@ -52,8 +53,21 @@ const ARRAY_COLS = 16
 const DIE_PPU_COUNT = 32
 const EMPTY_GRID = emptySnapshot(ARRAY_ROWS, ARRAY_COLS)
 
-function simCacheKey(modelId: string, gemmId: string, dataflow: DataflowType): string {
-  return `${modelId}:${gemmId}:${dataflow}`
+function simCacheKey(
+  modelId: string,
+  gemmId: string,
+  dataflow: DataflowType,
+  hw: HardwarePreset,
+): string {
+  return `${modelId}:${gemmId}:${dataflow}:${hw.clockGhz}:${hw.ppuSramSizeKb}:${hw.lpddrBandwidthGBps}`
+}
+
+function hardwarePayload(hw: HardwarePreset) {
+  return {
+    clock_ghz: hw.clockGhz,
+    ppu_sram_size_kb: hw.ppuSramSizeKb,
+    lpddr_bandwidth_gbps: hw.lpddrBandwidthGBps,
+  }
 }
 
 function microToCycleSnapshot(
@@ -88,6 +102,7 @@ export default function App() {
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState(1000)
   const [initLoading, setInitLoading] = useState(true)
+  const [simRunning, setSimRunning] = useState(false)
   const [gemmStats, setGemmStats] = useState<Record<string, GemmSimStat>>({})
   const [microLoading, setMicroLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -102,11 +117,12 @@ export default function App() {
   const [ppuMemoryPeak, setPpuMemoryPeak] = useState<MemoryPeakStats | null>(null)
   const [ppuCores, setPpuCores] = useState<MacroArrayState[][] | null>(null)
   const [logicDieSramDemand, setLogicDieSramDemand] = useState<LogicDieSramDemand | null>(null)
+  const [logicDieLpddrSchedule, setLogicDieLpddrSchedule] = useState<LogicDieLpddrSchedule | null>(null)
   const [started, setStarted] = useState(false)
   const playRef = useRef<number | null>(null)
   const simCacheRef = useRef<Map<string, SimCacheEntry>>(new Map())
-  const selectedGemmIdRef = useRef(selectedGemmId)
-  selectedGemmIdRef.current = selectedGemmId
+  const simRunIdRef = useRef(0)
+  const simRunningRef = useRef(false)
   const microCache = useRef<Map<string, MicroTileSnapshot>>(new Map())
   const ppuGridCache = useRef<Map<string, MacroArrayState[][]>>(new Map())
   const ppuMemoryCache = useRef<Map<string, MemoryAccess & { contributing_cores: number }>>(new Map())
@@ -135,6 +151,9 @@ export default function App() {
     setPpuCores(null)
     setLogicDieSramDemand(
       flow === 'output_stationary' ? (entry.response.logic_die_sram_demand ?? null) : null,
+    )
+    setLogicDieLpddrSchedule(
+      flow === 'output_stationary' ? (entry.response.logic_die_lpddr_schedule ?? null) : null,
     )
     setFrameIndex(0)
     setResponse(entry.response)
@@ -165,12 +184,24 @@ export default function App() {
     setStarted(true)
   }, [clearViewCaches])
 
-  const handleGemmSelect = useCallback((gemmId: string) => {
-    const key = simCacheKey(selectedModelId, gemmId, dataflow)
+  const ensureEntrySnapshots = useCallback(async (entry: SimCacheEntry): Promise<CycleSnapshot[]> => {
+    if (entry.snapshots.length > 0) return entry.snapshots
+    const snaps = await fetchAllSnapshots(entry.response.sim_id)
+    entry.snapshots = snaps
+    return snaps
+  }, [])
+
+  const handleGemmSelect = useCallback(async (gemmId: string) => {
+    const key = simCacheKey(selectedModelId, gemmId, dataflow, hardwarePreset)
     const entry = simCacheRef.current.get(key)
     if (!entry) return
-    activateView(entry, dataflow, gemmId)
-  }, [selectedModelId, dataflow, activateView])
+    try {
+      const snaps = await ensureEntrySnapshots(entry)
+      activateView({ response: entry.response, snapshots: snaps }, dataflow, gemmId)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load snapshots')
+    }
+  }, [selectedModelId, dataflow, hardwarePreset, activateView, ensureEntrySnapshots])
 
   useEffect(() => {
     fetchModels()
@@ -180,32 +211,68 @@ export default function App() {
         setSelectedGemmId(data.default_gemm_id)
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load models'))
+      .finally(() => setInitLoading(false))
   }, [])
 
   useEffect(() => {
     if (!catalog) return
 
+    simRunIdRef.current += 1
+    simRunningRef.current = false
+    setSimRunning(false)
+
     const model = catalog.models.find((m) => m.id === selectedModelId) ?? catalog.models[0]
     if (!model) return
 
-    let cancelled = false
-    setInitLoading(true)
+    setStarted(false)
+    setPlaying(false)
+    setResponse(null)
+    setSnapshots([])
+    setGemmStats(
+      Object.fromEntries(
+        model.gemm_ops.map((op) => [op.id, { totalCycles: null } satisfies GemmSimStat]),
+      ),
+    )
+  }, [catalog, selectedModelId, dataflow, hardwarePreset])
+
+  const stopSimulation = useCallback(() => {
+    if (!simRunningRef.current) return
+    simRunIdRef.current += 1
+    simRunningRef.current = false
+    setSimRunning(false)
+    setGemmStats((prev) => {
+      const next: Record<string, GemmSimStat> = { ...prev }
+      for (const [id, stat] of Object.entries(next)) {
+        if (stat.pending) {
+          next[id] = { totalCycles: null }
+        }
+      }
+      return next
+    })
+  }, [])
+
+  const startSimulation = useCallback(async () => {
+    if (!catalog || simRunningRef.current) return
+
+    const model = catalog.models.find((m) => m.id === selectedModelId) ?? catalog.models[0]
+    if (!model) return
+
+    const runId = ++simRunIdRef.current
+    simRunningRef.current = true
+    setSimRunning(true)
     setStarted(false)
     setError(null)
+    setPlaying(false)
 
     const pendingStats = Object.fromEntries(
       model.gemm_ops.map((op) => [op.id, { totalCycles: null, pending: true } satisfies GemmSimStat]),
     )
     setGemmStats(pendingStats)
 
-    async function preloadAll() {
-      const viewGemmId = selectedGemmIdRef.current ?? catalog!.default_gemm_id
-      let firstReady: SimCacheEntry | null = null
-      let firstReadyId = viewGemmId
-
+    try {
       for (const op of model.gemm_ops) {
-        if (cancelled) return
-        const key = simCacheKey(model.id, op.id, dataflow)
+        if (runId !== simRunIdRef.current) return
+        const key = simCacheKey(model.id, op.id, dataflow, hardwarePreset)
         try {
           const res = await runModelSimulation({
             model_id: model.id,
@@ -213,25 +280,19 @@ export default function App() {
             rows: ARRAY_ROWS,
             cols: ARRAY_COLS,
             dataflow,
+            hardware: hardwarePayload(hardwarePreset),
           })
-          const snaps = await fetchAllSnapshots(res.sim_id)
-          if (cancelled) return
-          const entry: SimCacheEntry = { response: res, snapshots: snaps }
+          if (runId !== simRunIdRef.current) return
+
+          const entry: SimCacheEntry = { response: res, snapshots: [] }
           simCacheRef.current.set(key, entry)
+          const cycles = res.logic_die_lpddr_schedule?.lpddr_aware_cycles ?? res.total_cycles
           setGemmStats((prev) => ({
             ...prev,
-            [op.id]: { totalCycles: res.total_cycles },
+            [op.id]: { totalCycles: cycles },
           }))
-          if (!firstReady) {
-            firstReady = entry
-            firstReadyId = op.id
-          }
-          if (op.id === viewGemmId) {
-            firstReady = entry
-            firstReadyId = op.id
-          }
         } catch (e) {
-          if (cancelled) return
+          if (runId !== simRunIdRef.current) return
           const message = e instanceof Error ? e.message : 'Simulation failed'
           setGemmStats((prev) => ({
             ...prev,
@@ -239,24 +300,13 @@ export default function App() {
           }))
         }
       }
-
-      if (cancelled) return
-
-      setInitLoading(false)
-      const preferredKey = simCacheKey(model.id, viewGemmId, dataflow)
-      const preferred = simCacheRef.current.get(preferredKey)
-      if (preferred) {
-        activateView(preferred, dataflow, viewGemmId)
-      } else if (firstReady) {
-        activateView(firstReady, dataflow, firstReadyId)
+    } finally {
+      if (runId === simRunIdRef.current) {
+        simRunningRef.current = false
+        setSimRunning(false)
       }
     }
-
-    void preloadAll()
-    return () => {
-      cancelled = true
-    }
-  }, [catalog, selectedModelId, dataflow, activateView])
+  }, [catalog, selectedModelId, dataflow, hardwarePreset])
 
   useEffect(() => {
     if (!playing || snapshots.length === 0) return
@@ -502,7 +552,9 @@ export default function App() {
   const logicDieUtil = response?.dims
     ? computeHierarchyUtilization(
         response.dims,
-        totalCycles,
+        logicDieLpddrSchedule?.lpddr_aware_cycles
+          ?? response.logic_die_lpddr_schedule?.lpddr_aware_cycles
+          ?? totalCycles,
         simDataflow,
         hardwarePreset.clockGhz,
       )
@@ -549,6 +601,7 @@ export default function App() {
               selectedGemmId={selectedGemmId}
               dataflow={dataflow}
               initLoading={initLoading}
+              simRunning={simRunning}
               gemmStats={gemmStats}
               onModelSelect={setSelectedModelId}
               onGemmSelect={handleGemmSelect}
@@ -558,9 +611,12 @@ export default function App() {
             <HardwarePanel
               preset={hardwarePreset}
               dataflow={dataflow}
-              disabled={initLoading}
+              simRunning={simRunning}
+              canStart={!!catalog && !initLoading}
               onPresetChange={patchHardwarePreset}
               onDataflowChange={setDataflow}
+              onStartSimulation={() => { void startSimulation() }}
+              onStopSimulation={stopSimulation}
             />
           </div>
         </aside>
@@ -715,6 +771,7 @@ export default function App() {
               coreViewContext={coreViewContext}
               coreSelection={ppuViewStats?.selectedCore ?? null}
               logicDieSramDemand={logicDieSramDemand}
+              logicDieLpddrSchedule={logicDieLpddrSchedule}
               currentWaveIndex={waveIndexFromSnapshot(snap)}
               waveCount={tilePlan?.wave_count ?? 1}
             />
