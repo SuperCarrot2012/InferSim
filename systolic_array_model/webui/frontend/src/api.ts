@@ -1,6 +1,7 @@
 import type {
   CycleSnapshot,
   DataflowType,
+  LogicDieSramDemand,
   MacroArrayState,
   MemoryAccess,
   MemoryPeakStats,
@@ -134,6 +135,13 @@ export async function fetchPpuMemoryPeak(
   if (!res.ok) throw new Error('Failed to load PPU memory peak')
   const data = await res.json()
   return data.peak
+}
+
+export async function fetchLogicDieSramDemand(simId: string): Promise<LogicDieSramDemand> {
+  const res = await fetch(`${API}/simulate/${simId}/logic_die_sram_demand`)
+  if (!res.ok) throw new Error('Failed to load Logic Die SRAM demand')
+  const data = await res.json()
+  return data.demand
 }
 
 export function coordLabel(prefix: string, coord: [number, number] | null): string {

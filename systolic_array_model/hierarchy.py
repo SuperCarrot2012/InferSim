@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from systolic_array_model.cycles import compute_cycle_count
+from systolic_array_model.cycles import compute_cycle_count, compute_os_cycle_count
 from systolic_array_model.types import DataflowType
 
 # Layer 1 — Logic Die (32 PPU)
@@ -65,7 +65,7 @@ class CoreTile:
             "local_k": self.local_k,
             "local_n": self.local_n,
             "wave_index": self.wave_index,
-            "total_cycles": compute_cycle_count(self.local_m, self.local_k, self.local_n),
+            "total_cycles": compute_os_cycle_count(self.local_m, self.local_k, self.local_n),
         }
 
 

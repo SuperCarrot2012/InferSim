@@ -1,10 +1,5 @@
 import type { DataflowType, GemmOpInfo, GemmSimStat, ModelCatalog, ModelInfo } from '../types'
 
-const DATAFLOW_LABELS = {
-  output_stationary: '部分和驻留 (OS)',
-  weight_stationary: '权重驻留 (WS)',
-} as const
-
 interface Props {
   catalog: ModelCatalog | null
   selectedModelId: string
@@ -14,7 +9,6 @@ interface Props {
   gemmStats: Record<string, GemmSimStat>
   onModelSelect: (modelId: string) => void
   onGemmSelect: (gemmId: string) => void
-  onDataflowChange: (v: DataflowType) => void
 }
 
 function findModel(catalog: ModelCatalog | null, modelId: string): ModelInfo | null {
@@ -37,7 +31,6 @@ export function ModelPanel({
   gemmStats,
   onModelSelect,
   onGemmSelect,
-  onDataflowChange,
 }: Props) {
   const model = findModel(catalog, selectedModelId)
   const hw = catalog?.hardware
@@ -64,18 +57,6 @@ export function ModelPanel({
       {model && (
         <p className="config-desc">{model.description}</p>
       )}
-
-      <label className="config-field">
-        数据流模式
-        <select
-          value={dataflow}
-          onChange={(e) => onDataflowChange(e.target.value as DataflowType)}
-          disabled={initLoading}
-        >
-          <option value="output_stationary">{DATAFLOW_LABELS.output_stationary}</option>
-          <option value="weight_stationary">{DATAFLOW_LABELS.weight_stationary}</option>
-        </select>
-      </label>
 
       {model && (
         <>

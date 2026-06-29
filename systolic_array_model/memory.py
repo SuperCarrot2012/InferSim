@@ -123,10 +123,10 @@ def _spread_read_elems(total: int, load_cycles: int, cycle_idx: int) -> int:
 
 
 def os_writeback_count(m: int, k: int, n: int, local_cycle: int) -> int:
-    """MAC(m,c) writes when its last MAC completes at local_cycle = m + c + K - 1."""
+    """MAC(m,c) writes one cycle after last MAC, at local_cycle = m + c + k."""
     if local_cycle < 0 or k <= 0:
         return 0
-    done = local_cycle - k + 1
+    done = local_cycle - k
     if done < 0 or done > (m - 1) + (n - 1):
         return 0
     count = 0

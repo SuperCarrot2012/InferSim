@@ -7,9 +7,8 @@ const MACS_PER_CORE = CORE_MAC * CORE_MAC
 
 export const TC_GRID = 4
 
-/** Assumed Logic Die clock for compute metrics display. */
+/** Default Logic Die clock (GHz) when hardware preset is unavailable. */
 export const LOGIC_DIE_CLOCK_GHZ = 1
-export const LOGIC_DIE_CLOCK_HZ = LOGIC_DIE_CLOCK_GHZ * 1e9
 /** One MAC = one multiply-accumulate ≈ 2 FLOPs. */
 export const FLOPS_PER_MAC = 2
 
@@ -60,6 +59,7 @@ export function computeHierarchyUtilization(
   dims: { m: number; k: number; n: number },
   totalCycles: number,
   dataflow: string,
+  clockGhz: number,
 ): LogicDieUtilStats | null {
   if (totalCycles <= 0) return null
 
@@ -71,17 +71,18 @@ export function computeHierarchyUtilization(
   const capacityMacs = peakMacsPerCycle * totalCycles
   const utilization = capacityMacs > 0 ? actualMacs / capacityMacs : 0
   const macsPerCycle = actualMacs / totalCycles
-  const flopsPerSec = macsPerCycle * LOGIC_DIE_CLOCK_HZ * FLOPS_PER_MAC
-  const peakFlopsPerSec = peakMacsPerCycle * LOGIC_DIE_CLOCK_HZ * FLOPS_PER_MAC
-  const peakTflops = computePeakTflops(peakMacsPerCycle, LOGIC_DIE_CLOCK_GHZ)
-  const effectiveTflops = computePeakTflops(macsPerCycle, LOGIC_DIE_CLOCK_GHZ)
+  const clockHz = clockGhz * 1e9
+  const flopsPerSec = macsPerCycle * clockHz * FLOPS_PER_MAC
+  const peakFlopsPerSec = peakMacsPerCycle * clockHz * FLOPS_PER_MAC
+  const peakTflops = computePeakTflops(peakMacsPerCycle, clockGhz)
+  const effectiveTflops = computePeakTflops(macsPerCycle, clockGhz)
 
   return {
     utilization,
     actualMacs,
     capacityMacs,
     viewLabel: isOS ? 'Logic Die View' : 'Tensor Core View',
-    clockGhz: LOGIC_DIE_CLOCK_GHZ,
+    clockGhz,
     macsPerCycle,
     peakMacsPerCycle,
     flopsPerSec,
@@ -91,11 +92,33 @@ export function computeHierarchyUtilization(
   }
 }
 
+export type CoreSelectionStats = NonNullable<PpuViewStats['selectedCore']>
+
+export interface PpuLocalStats {
+  label: string
+  local_m: number
+  local_k: number
+  local_n: number
+  total_cycles: number
+  /** SRAM capacity to hold this PPU's activation / weight tiles (fp16). */
+  sramCapacity: {
+    dtype: string
+    bytes_per_elem: number
+    activation_elems: number
+    weight_elems: number
+    activation_bytes: number
+    weight_bytes: number
+    total_bytes: number
+  }
+}
+
 export interface PpuViewStats {
   ppuIndex: number
   activeCores: number
   computingCores: number
   doneCores: number
+  /** Aggregated GEMM slice mapped onto this PPU (all active cores). */
+  ppuLocal: PpuLocalStats | null
   selectedCore: {
     row: number
     col: number
@@ -157,11 +180,14 @@ export function summarizePpuView(
     }
   }
 
+  const ppuLocal = summarizePpuTiles(tilePlan, ppuIndex, waveIndex)
+
   return {
     ppuIndex,
     activeCores,
     computingCores,
     doneCores,
+    ppuLocal,
     selectedCore,
   }
 }
@@ -180,7 +206,51 @@ export function tileKeyFromEntry(tile: TileEntry): string {
 
 export function tileCycleCount(tile: TileEntry): number {
   if (tile.total_cycles != null) return tile.total_cycles
-  return Math.max(0, tile.local_m + tile.local_k + tile.local_n - 3) + 1
+  // OS fallback: includes one registered writeback cycle after last MAC.
+  return Math.max(0, tile.local_m + tile.local_k + tile.local_n - 2) + 1
+}
+
+export function summarizePpuTiles(
+  tilePlan: TilePlan | undefined,
+  ppuIndex: number,
+  waveIndex: number,
+): PpuLocalStats | null {
+  const tiles =
+    tilePlan?.tiles?.filter(
+      (t) => t.ppu_index === ppuIndex && (t.wave_index ?? 0) === waveIndex,
+    ) ?? []
+  if (tiles.length === 0) return null
+
+  const local_m = tiles[0].local_m
+  const local_k = tiles[0].local_k
+  const local_n = tiles.reduce((sum, t) => sum + t.local_n, 0)
+  const m0 = tiles[0].m0
+  const n0Min = Math.min(...tiles.map((t) => t.n0))
+  const n1Max = Math.max(...tiles.map((t) => t.n0 + t.local_n))
+  const total_cycles = Math.max(...tiles.map((t) => tileCycleCount(t)))
+
+  const bytesPerElem = 2
+  const activationElems = local_m * local_k
+  const weightElems = local_k * local_n
+  const activationBytes = activationElems * bytesPerElem
+  const weightBytes = weightElems * bytesPerElem
+
+  return {
+    label: `M[${m0}:${m0 + local_m}]×N[${n0Min}:${n1Max}]`,
+    local_m,
+    local_k,
+    local_n,
+    total_cycles,
+    sramCapacity: {
+      dtype: 'fp16',
+      bytes_per_elem: bytesPerElem,
+      activation_elems: activationElems,
+      weight_elems: weightElems,
+      activation_bytes: activationBytes,
+      weight_bytes: weightBytes,
+      total_bytes: activationBytes + weightBytes,
+    },
+  }
 }
 
 export function findTileByKey(tilePlan: TilePlan | undefined, tileKey: string): TileEntry | null {

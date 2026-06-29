@@ -147,6 +147,7 @@ export interface SimulateResponse {
   config: Record<string, unknown>
   dims: { m: number; k: number; n: number }
   tile_plan?: TilePlan
+  logic_die_sram_demand?: LogicDieSramDemand | null
 }
 
 export interface GemmSimStat {
@@ -177,6 +178,21 @@ export interface ModelInfo {
   label: string
   description: string
   gemm_ops: GemmOpInfo[]
+}
+
+export interface LogicDieSramWaveDemand {
+  wave_index: number
+  per_ppu_peak_bytes: number
+  active_ppu_count: number
+  logic_die_peak_bytes: number
+}
+
+export interface LogicDieSramDemand {
+  per_ppu_peak_bytes: number
+  logic_die_peak_bytes: number
+  active_ppu_count: number
+  die_ppu_count: number
+  waves?: LogicDieSramWaveDemand[]
 }
 
 export interface ModelCatalog {

@@ -86,8 +86,7 @@ LLAMA3_8B = ModelSpec(
     gemm_ops=[
         GemmOp("qo_proj", "Q/O_Proj", _DECODE_M, _HIDDEN, _HIDDEN, note="Q_Proj · O_Proj"),
         GemmOp("kv_proj", "K/V_Proj", _DECODE_M, _HIDDEN, _KV_HEADS * _HEAD_DIM, note="K_Proj · V_Proj"),
-        GemmOp("gate_proj", "Gate_Proj", _DECODE_M, _HIDDEN, _INTERMEDIATE),
-        GemmOp("up_proj", "Up_Proj", _DECODE_M, _HIDDEN, _INTERMEDIATE),
+        GemmOp("gate_up_proj", "Gate/Up_Proj", _DECODE_M, _HIDDEN, _INTERMEDIATE, note="Gate_Proj · Up_Proj"),
         GemmOp("down_proj", "Down_Proj", _DECODE_M, _INTERMEDIATE, _HIDDEN),
         GemmOp("lm_head", "LM_Head", _DECODE_M, _HIDDEN, _VOCAB),
     ],

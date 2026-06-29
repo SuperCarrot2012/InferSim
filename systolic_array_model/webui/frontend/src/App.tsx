@@ -4,6 +4,7 @@ import {
   fetchCoreMemoryPeak,
   fetchMicroSnapshot,
   fetchModels,
+  fetchLogicDieSramDemand,
   fetchPpuCoreGrid,
   fetchPpuMemory,
   fetchPpuMemoryPeak,
@@ -12,6 +13,7 @@ import {
 import type {
   CycleSnapshot,
   DataflowType,
+  LogicDieSramDemand,
   MacroArrayState,
   MemoryAccess,
   MemoryPeakStats,
@@ -22,6 +24,7 @@ import type {
   GemmSimStat,
 } from './types'
 import { ModelPanel } from './components/ModelPanel'
+import { HardwarePanel } from './components/HardwarePanel'
 import { ControlBar } from './components/ControlBar'
 import { Inspector } from './components/Inspector'
 import { LogicDieGrid } from './components/LogicDieGrid'
@@ -42,6 +45,7 @@ import {
   waveLocalCycleFromSnapshot,
 } from './microSnapshot'
 import './App.css'
+import { DEFAULT_HARDWARE_PRESET, type HardwarePreset } from './hardwareConfig'
 
 const ARRAY_ROWS = 16
 const ARRAY_COLS = 16
@@ -77,6 +81,7 @@ export default function App() {
   const [selectedModelId, setSelectedModelId] = useState('llama3-8b')
   const [selectedGemmId, setSelectedGemmId] = useState<string | null>('qo_proj')
   const [dataflow, setDataflow] = useState<DataflowType>('output_stationary')
+  const [hardwarePreset, setHardwarePreset] = useState<HardwarePreset>(DEFAULT_HARDWARE_PRESET)
   const [response, setResponse] = useState<SimulateResponse | null>(null)
   const [snapshots, setSnapshots] = useState<CycleSnapshot[]>([])
   const [frameIndex, setFrameIndex] = useState(0)
@@ -96,6 +101,7 @@ export default function App() {
   const [coreMemoryPeak, setCoreMemoryPeak] = useState<MemoryPeakStats | null>(null)
   const [ppuMemoryPeak, setPpuMemoryPeak] = useState<MemoryPeakStats | null>(null)
   const [ppuCores, setPpuCores] = useState<MacroArrayState[][] | null>(null)
+  const [logicDieSramDemand, setLogicDieSramDemand] = useState<LogicDieSramDemand | null>(null)
   const [started, setStarted] = useState(false)
   const playRef = useRef<number | null>(null)
   const simCacheRef = useRef<Map<string, SimCacheEntry>>(new Map())
@@ -127,6 +133,9 @@ export default function App() {
     setCoreMemoryPeak(null)
     setPpuMemoryPeak(null)
     setPpuCores(null)
+    setLogicDieSramDemand(
+      flow === 'output_stationary' ? (entry.response.logic_die_sram_demand ?? null) : null,
+    )
     setFrameIndex(0)
     setResponse(entry.response)
     setSnapshots(entry.snapshots)
@@ -455,6 +464,31 @@ export default function App() {
     }
   }, [response?.sim_id, isOS, focusedPpu, started])
 
+  useEffect(() => {
+    if (!response?.sim_id || !started || !isOS) {
+      setLogicDieSramDemand(null)
+      return
+    }
+
+    if (response.logic_die_sram_demand) {
+      setLogicDieSramDemand(response.logic_die_sram_demand)
+      return
+    }
+
+    let cancelled = false
+    fetchLogicDieSramDemand(response.sim_id)
+      .then((demand) => {
+        if (!cancelled) setLogicDieSramDemand(demand)
+      })
+      .catch(() => {
+        if (!cancelled) setLogicDieSramDemand(null)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [response?.sim_id, response?.logic_die_sram_demand, isOS, started])
+
   const maxCycle = snapshots.length > 0 ? snapshots[snapshots.length - 1].cycle : 0
   const totalCycles = response?.total_cycles ?? snapshots.length
   const simDataflow = (response?.config?.dataflow as string) ?? 'output_stationary'
@@ -466,8 +500,17 @@ export default function App() {
     : null
 
   const logicDieUtil = response?.dims
-    ? computeHierarchyUtilization(response.dims, totalCycles, simDataflow)
+    ? computeHierarchyUtilization(
+        response.dims,
+        totalCycles,
+        simDataflow,
+        hardwarePreset.clockGhz,
+      )
     : null
+
+  const patchHardwarePreset = useCallback((patch: Partial<HardwarePreset>) => {
+    setHardwarePreset((prev) => ({ ...prev, ...patch }))
+  }, [])
 
   const selectedMac =
     microSnap && selected ? microSnap.macs[selected.row]?.[selected.col] ?? null : null
@@ -490,7 +533,7 @@ export default function App() {
         <div className="header-brand">
           <span className="logo">◈</span>
           <div>
-            <h1>脉动阵列仿真器</h1>
+            <h1>模型仿真器</h1>
           </div>
         </div>
       </header>
@@ -498,18 +541,28 @@ export default function App() {
       {error && <div className="error-banner">{error}</div>}
 
       <div className="layout">
-        <aside className="sidebar">
-          <ModelPanel
-            catalog={catalog}
-            selectedModelId={selectedModelId}
-            selectedGemmId={selectedGemmId}
-            dataflow={dataflow}
-            initLoading={initLoading}
-            gemmStats={gemmStats}
-            onModelSelect={setSelectedModelId}
-            onGemmSelect={handleGemmSelect}
-            onDataflowChange={setDataflow}
-          />
+        <aside className="sidebar sidebar-split">
+          <div className="sidebar-col">
+            <ModelPanel
+              catalog={catalog}
+              selectedModelId={selectedModelId}
+              selectedGemmId={selectedGemmId}
+              dataflow={dataflow}
+              initLoading={initLoading}
+              gemmStats={gemmStats}
+              onModelSelect={setSelectedModelId}
+              onGemmSelect={handleGemmSelect}
+            />
+          </div>
+          <div className="sidebar-col">
+            <HardwarePanel
+              preset={hardwarePreset}
+              dataflow={dataflow}
+              disabled={initLoading}
+              onPresetChange={patchHardwarePreset}
+              onDataflowChange={setDataflow}
+            />
+          </div>
         </aside>
 
         <main className="main">
@@ -584,7 +637,7 @@ export default function App() {
 
                 <section className="viz-layer viz-core">
                   <div className="viz-panel-head">
-                    <h4>Systolic Core View</h4>
+                    <h4>Core View</h4>
                     {focusedCore && (
                       <span className="viz-badge">
                         Core [{focusedCore.row},{focusedCore.col}]
@@ -606,7 +659,7 @@ export default function App() {
               <div className="viz-split">
                 <section className="viz-micro">
                   <div className="viz-panel-head">
-                    <h4>Systolic Core View</h4>
+                    <h4>Core View</h4>
                     {focusedArray && (
                       <span className="viz-badge">
                         阵列 [{focusedArray.row},{focusedArray.col}]
@@ -660,6 +713,10 @@ export default function App() {
               ppuMemoryPeak={ppuMemoryPeak}
               logicDieUtil={logicDieUtil}
               coreViewContext={coreViewContext}
+              coreSelection={ppuViewStats?.selectedCore ?? null}
+              logicDieSramDemand={logicDieSramDemand}
+              currentWaveIndex={waveIndexFromSnapshot(snap)}
+              waveCount={tilePlan?.wave_count ?? 1}
             />
           )}
         </aside>

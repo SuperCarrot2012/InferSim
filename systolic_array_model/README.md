@@ -1,4 +1,4 @@
-# 脉动阵列仿真器
+# 模型仿真器
 
 面向 LLM 推理 GEMM 的脉动阵列周期级仿真器，提供 Web 可视化界面。选择模型与算子后自动填入 M×K×N 参数，展示 Logic Die → PPU → Systolic Core 三层视图及 SRAM 访存统计。
 
@@ -34,8 +34,7 @@ Logic Die (4×8 = 32 PPU)
 |------|----------------|------|
 | Q/O_Proj | 1×4096×4096 | Q_Proj · O_Proj |
 | K/V_Proj | 1×4096×1024 | K_Proj · V_Proj |
-| Gate_Proj | 1×4096×14336 | |
-| Up_Proj | 1×4096×14336 | |
+| Gate/Up_Proj | 1×4096×14336 | Gate_Proj · Up_Proj |
 | Down_Proj | 1×14336×4096 | |
 | LM_Head | 1×4096×128256 | |
 

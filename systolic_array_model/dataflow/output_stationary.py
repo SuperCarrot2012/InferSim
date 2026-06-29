@@ -6,7 +6,7 @@ from systolic_array_model.array import SystolicArray
 from systolic_array_model.config import ArrayConfig
 from systolic_array_model.dataflow.base import DataflowStrategy
 from systolic_array_model.memory import compute_memory_access
-from systolic_array_model.cycles import compute_cycle_count
+from systolic_array_model.cycles import compute_os_cycle_count, os_max_local_cycle
 from systolic_array_model.types import CycleSnapshot, DataflowType, SimPhase
 
 
@@ -42,7 +42,7 @@ class OutputStationaryDataflow(DataflowStrategy):
         array.act_state = [[None] * cols for _ in range(rows)]
         array.weight_state = [[None] * cols for _ in range(rows)]
 
-        max_local = max(0, m + k + n - 3)
+        max_local = os_max_local_cycle(m, k, n)
 
         for local_cycle in range(max_local + 1):
             left_inputs: list[float | None] = [None] * rows
@@ -101,7 +101,7 @@ class OutputStationaryDataflow(DataflowStrategy):
                 f"M and N must fit in array ({rows}x{cols}); got M={m}, N={n}"
             )
 
-        total = compute_cycle_count(m, k, n)
+        total = compute_os_cycle_count(m, k, n)
         if cycle < 0 or cycle >= total:
             raise ValueError(f"Cycle {cycle} out of range [0, {total})")
 
@@ -111,7 +111,7 @@ class OutputStationaryDataflow(DataflowStrategy):
         array.act_state = [[None] * cols for _ in range(rows)]
         array.weight_state = [[None] * cols for _ in range(rows)]
 
-        max_local = max(0, m + k + n - 3)
+        max_local = os_max_local_cycle(m, k, n)
         for local_cycle in range(max_local + 1):
             left_inputs: list[float | None] = [None] * rows
             left_labels: list[str | None] = [None] * rows
@@ -167,14 +167,14 @@ class OutputStationaryDataflow(DataflowStrategy):
                 f"M and N must fit in array ({rows}x{cols}); got M={m}, N={n}"
             )
 
-        total = compute_cycle_count(m, k, n)
+        total = compute_os_cycle_count(m, k, n)
         array.reset()
         array.load_psums(m, n, m0=m0, n0=n0)
         array.begin_compute_os(m, n)
         array.act_state = [[None] * cols for _ in range(rows)]
         array.weight_state = [[None] * cols for _ in range(rows)]
 
-        max_local = max(0, m + k + n - 3)
+        max_local = os_max_local_cycle(m, k, n)
         for local_cycle in range(max_local + 1):
             left_inputs: list[float | None] = [None] * rows
             top_inputs: list[float | None] = [None] * cols

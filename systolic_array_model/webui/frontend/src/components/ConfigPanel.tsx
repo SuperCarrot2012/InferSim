@@ -126,7 +126,7 @@ export function ConfigPanel({
       <div className="config-note">
         {isOS ? (
           <>
-            <strong>OS 结构：</strong>Logic Die View → PPU View → Systolic Core View<br />
+            <strong>OS 结构：</strong>Logic Die View → PPU View → Core View<br />
             <strong>约束：</strong>M ∈ [1,{osMMax}]；K ∈ [1,{osKMax.toLocaleString()}]（流式）；N 优先切分，最大 {osNMax.toLocaleString()}<br />
             <strong>分块：</strong>{osTileHint(n, arrayCols)}
             {tilePlan && (

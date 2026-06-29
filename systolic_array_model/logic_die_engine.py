@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from systolic_array_model.config import ArrayConfig
-from systolic_array_model.cycles import compute_cycle_count
+from systolic_array_model.cycles import compute_os_cycle_count
 from systolic_array_model.hierarchy import (
     DIE_PPU_COLS,
     DIE_PPU_ROWS,
@@ -136,7 +136,7 @@ class LogicDieEngine:
                 mac_cols=self.config.cols,
             )
             tile_cycles = {
-                tile.key: compute_cycle_count(tile.local_m, tile.local_k, tile.local_n)
+                tile.key: compute_os_cycle_count(tile.local_m, tile.local_k, tile.local_n)
                 for tile in plan.tiles
             }
             wave_snaps = _merge_os_snapshots(

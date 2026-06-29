@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from systolic_array_model.hierarchy import OS_K_MAX, OS_M_MAX, OS_N_MAX
 from systolic_array_model.simulator import (
     aggregate_ppu_memory,
+    logic_die_sram_bandwidth_demand,
     peak_core_memory,
     peak_ppu_memory,
     render_micro_snapshot,
@@ -28,7 +29,7 @@ from systolic_array_model.types import (
     _micro_tile_to_dict,
 )
 
-app = FastAPI(title="脉动阵列仿真器")
+app = FastAPI(title="模型仿真器")
 
 app.add_middleware(
     CORSMiddleware,
@@ -42,6 +43,7 @@ _macro_cache: dict[str, list[dict[str, Any]]] = {}
 _micro_cache: dict[str, dict[str, Any]] = {}
 _peak_core_cache: dict[str, dict[str, Any]] = {}
 _peak_ppu_cache: dict[str, dict[str, Any]] = {}
+_logic_die_sram_cache: dict[str, dict[str, Any]] = {}
 _ppu_grid_cache: dict[str, list[dict[str, Any]]] = {}
 
 
@@ -62,6 +64,7 @@ class SimulateResponse(BaseModel):
     config: dict[str, Any]
     dims: dict[str, int]
     tile_plan: dict[str, Any] = Field(default_factory=dict)
+    logic_die_sram_demand: dict[str, Any] | None = None
 
 
 @app.get("/api/health")
@@ -128,12 +131,17 @@ def _execute_simulation(
     sim_id = str(uuid.uuid4())
     _sim_cache[sim_id] = result
 
+    sram_demand = None
+    if flow == DataflowType.OUTPUT_STATIONARY:
+        sram_demand = logic_die_sram_bandwidth_demand(result)
+
     return SimulateResponse(
         sim_id=sim_id,
         total_cycles=result.total_cycles,
         config=result.config,
         dims=result.dims,
         tile_plan=result.tile_plan,
+        logic_die_sram_demand=sram_demand,
     )
 
 
@@ -224,7 +232,7 @@ def get_ppu_grid(sim_id: str, cycle: int, ppu_index: int) -> dict[str, Any]:
 
 @app.get("/api/simulate/{sim_id}/micro/{cycle}")
 def get_micro_snapshot(sim_id: str, cycle: int, tile_key: str) -> dict[str, Any]:
-    """On-demand Systolic Core View snapshot for one tile at a given cycle.
+    """On-demand Core View snapshot for one tile at a given cycle.
 
     tile_key: OS ``{ppu},{core_row},{core_col}``; WS ``{grid_row},{grid_col}``.
     """
@@ -299,6 +307,19 @@ def get_ppu_memory_peak(sim_id: str, ppu_index: int) -> dict[str, Any]:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     return {"ppu_index": ppu_index, "peak": _peak_ppu_cache[cache_key]}
+
+
+@app.get("/api/simulate/{sim_id}/logic_die_sram_demand")
+def get_logic_die_sram_demand(sim_id: str) -> dict[str, Any]:
+    """Peak SRAM bandwidth demand from simulation (per-PPU peak × active PPU count)."""
+    result = _sim_cache.get(sim_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+
+    if sim_id not in _logic_die_sram_cache:
+        _logic_die_sram_cache[sim_id] = logic_die_sram_bandwidth_demand(result)
+
+    return {"sim_id": sim_id, "demand": _logic_die_sram_cache[sim_id]}
 
 
 @app.get("/api/simulate/{sim_id}/meta")

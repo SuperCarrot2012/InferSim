@@ -113,7 +113,7 @@ class SystolicArray:
                     mac.a_coord = [r + m0, k_idx + k0]
                 if mac.weight_in is not None and 0 <= k_idx < k_dim:
                     mac.w_coord = [k_idx + k0, c + n0]
-                mac.writeback = local_cycle == r + c + k_dim - 1
+                mac.writeback = local_cycle == r + c + k_dim
 
     def capture_macs_full(
         self,

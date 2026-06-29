@@ -2,8 +2,30 @@ import type { CycleSnapshot, MemoryAccess } from './types'
 
 const FP16_BYTES = 2
 
+export function formatStorageBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MiB`
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(2)} KiB`
+  return `${bytes} B`
+}
+
 export function formatBytesPerCycle(bytes: number): string {
   return `${bytes} B/cycle`
+}
+
+/** bytes/cycle × GHz → TB/s */
+export function bytesPerCycleToTbytesPerSec(
+  bytesPerCycle: number,
+  clockGhz: number,
+): number {
+  return (bytesPerCycle * clockGhz * 1e9) / 1e12
+}
+
+export function formatTbytesPerSec(tbytesPerSec: number): string {
+  if (!Number.isFinite(tbytesPerSec) || tbytesPerSec <= 0) return '0 TB/s'
+  if (tbytesPerSec >= 100) return `${Math.round(tbytesPerSec)} TB/s`
+  if (tbytesPerSec >= 10) return `${tbytesPerSec.toFixed(1)} TB/s`
+  return `${tbytesPerSec.toFixed(2)} TB/s`
 }
 
 export function deriveMemoryAccess(snapshot: CycleSnapshot): MemoryAccess {
