@@ -1,0 +1,19 @@
+{
+  "benchmarks": [
+    {
+      "id": "a100",
+      "label": "NVIDIA A100",
+      "model_id": "llama3-8b",
+      "note": "Llama3-8B decode 单 token 参考 cycle，用于与本仿真对比",
+      "gemm_cycles": {
+        "qo_proj": 36540,
+        "kv_proj": 14490,
+        "qkt_bmm": 23300,
+        "pv_bmm": 23300,
+        "gate_up_proj": 110730,
+        "down_proj": 105720,
+        "lm_head": 791360
+      }
+    }
+  ]
+}

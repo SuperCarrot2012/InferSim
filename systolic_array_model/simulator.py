@@ -31,6 +31,8 @@ def run_simulation(
     dataflow: DataflowType = DataflowType.OUTPUT_STATIONARY,
     mac_latency: int = 1,
     weight_load_cycles: int = 1,
+    batch: int = 1,
+    ppu_offset: int = 0,
 ) -> SimResult:
     """Run cycle-accurate GEMM dataflow simulation.
 
@@ -49,8 +51,8 @@ def run_simulation(
     )
     if dataflow == DataflowType.OUTPUT_STATIONARY:
         engine = LogicDieEngine(config)
-    else:
-        engine = TensorCoreEngine(config)
+        return engine.run(m, k, n, batch=batch, ppu_offset=ppu_offset)
+    engine = TensorCoreEngine(config)
     return engine.run(m, k, n)
 
 

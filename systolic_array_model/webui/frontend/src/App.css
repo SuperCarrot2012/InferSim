@@ -437,6 +437,33 @@ html {
   color: var(--accent);
 }
 
+.gemm-card-benchmark {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 0.25rem;
+  padding-top: 0.25rem;
+  border-top: 1px dashed rgba(42, 53, 72, 0.6);
+  font-size: 0.78rem;
+}
+
+.gemm-card-benchmark .gemm-detail-key {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.gemm-card-benchmark .gemm-detail-val {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--warning);
+}
+
+.gemm-benchmark-pct {
+  font-weight: 500;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
 .model-btn {
   width: 100%;
   text-align: left;

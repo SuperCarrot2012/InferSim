@@ -185,6 +185,9 @@ def logic_die_lpddr_schedule(
         k_chunks = [local_k] if w_full_resident else split_k_chunks(local_k, k_chunk)
 
         a_bytes = m * k * FP16_BYTES
+        heads_in_wave = int(wave.get("heads_in_wave", 1))
+        if heads_in_wave > 1:
+            a_bytes *= heads_in_wave
         a_load_cycles = cycles_for_bytes(a_bytes, lpddr_bpc)
 
         prefetch_cycles: list[int] = []

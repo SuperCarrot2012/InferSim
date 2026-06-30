@@ -107,6 +107,8 @@ def _execute_simulation(
     mac_latency: int,
     weight_load_cycles: int,
     hardware: HardwareConfig | None = None,
+    batch: int = 1,
+    ppu_offset: int = 0,
 ) -> SimulateResponse:
     try:
         flow = DataflowType(dataflow)
@@ -134,6 +136,8 @@ def _execute_simulation(
             dataflow=flow,
             mac_latency=mac_latency,
             weight_load_cycles=weight_load_cycles,
+            batch=batch,
+            ppu_offset=ppu_offset,
         )
     except (ValueError, NotImplementedError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -186,6 +190,8 @@ def simulate_model(req: ModelSimulateRequest) -> SimulateResponse:
         mac_latency=req.mac_latency,
         weight_load_cycles=req.weight_load_cycles,
         hardware=req.hardware,
+        batch=op.batch,
+        ppu_offset=0,
     )
 
 

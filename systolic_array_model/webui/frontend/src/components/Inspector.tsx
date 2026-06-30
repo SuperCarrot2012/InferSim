@@ -61,6 +61,17 @@ export function Inspector({
       ? logicDieLpddrSchedule.lpddr_bytes_per_cycle / activePpuCount
       : null
 
+  const sramForWave =
+    logicDieSramDemand?.waves?.find((w) => w.wave_index === currentWaveIndex)
+    ?? logicDieSramDemand?.waves?.[0]
+
+  const sramDiePeakBytes =
+    sramForWave?.logic_die_peak_bytes ?? logicDieSramDemand?.logic_die_peak_bytes ?? 0
+  const sramPpuPeakBytes =
+    sramForWave?.per_ppu_peak_bytes ?? logicDieSramDemand?.per_ppu_peak_bytes ?? 0
+  const sramActivePpus =
+    sramForWave?.active_ppu_count ?? logicDieSramDemand?.active_ppu_count ?? 0
+
   return (
     <div className="inspector">
       <h3>状态检查器</h3>
@@ -105,6 +116,52 @@ export function Inspector({
                   </span>
                 </span>
               </div>
+              {logicDieSramDemand && sramDiePeakBytes > 0 && (
+                <>
+                  <div className="stat-row">
+                    <span className="label">SRAM 带宽需求</span>
+                    <span className="value mono logic-die-sram">
+                      <span>{sramDiePeakBytes.toLocaleString()} B/cycle</span>
+                      <span>
+                        {formatTbytesPerSec(
+                          bytesPerCycleToTbytesPerSec(
+                            sramDiePeakBytes,
+                            logicDieUtil.clockGhz,
+                          ),
+                        )}
+                      </span>
+                    </span>
+                  </div>
+                  <p className="logic-die-sram-detail mono">
+                    单 PPU 峰值 {sramPpuPeakBytes.toLocaleString()} B/cycle ×{' '}
+                    {sramActivePpus} 活跃 PPU
+                    {waveCount > 1 && <> · Wave {currentWaveIndex + 1}/{waveCount}</>}
+                  </p>
+                </>
+              )}
+            </>
+          )}
+          {!logicDieLpddrSchedule && logicDieSramDemand && sramDiePeakBytes > 0 && (
+            <>
+              <div className="stat-row section-start">
+                <span className="label">SRAM 带宽需求</span>
+                <span className="value mono logic-die-sram">
+                  <span>{sramDiePeakBytes.toLocaleString()} B/cycle</span>
+                  <span>
+                    {formatTbytesPerSec(
+                      bytesPerCycleToTbytesPerSec(
+                        sramDiePeakBytes,
+                        logicDieUtil.clockGhz,
+                      ),
+                    )}
+                  </span>
+                </span>
+              </div>
+              <p className="logic-die-sram-detail mono">
+                单 PPU 峰值 {sramPpuPeakBytes.toLocaleString()} B/cycle ×{' '}
+                {sramActivePpus} 活跃 PPU
+                {waveCount > 1 && <> · Wave {currentWaveIndex + 1}/{waveCount}</>}
+              </p>
             </>
           )}
           <div className="stat-row section-start">

@@ -44,6 +44,7 @@ class CoreTile:
     local_k: int
     local_n: int
     wave_index: int = 0
+    head_index: int = 0
 
     @property
     def key(self) -> str:
@@ -65,6 +66,7 @@ class CoreTile:
             "local_k": self.local_k,
             "local_n": self.local_n,
             "wave_index": self.wave_index,
+            "head_index": self.head_index,
             "total_cycles": compute_os_cycle_count(self.local_m, self.local_k, self.local_n),
         }
 
@@ -134,6 +136,89 @@ def os_n_wave_count(n: int, *, mac_cols: int = CORE_MAC) -> int:
     return len(os_n_wave_chunks(n, mac_cols=mac_cols))
 
 
+def os_ppu_n_wave_chunks(n: int, *, mac_cols: int = CORE_MAC) -> list[tuple[int, int]]:
+    """Split global N into waves that fit on one PPU (16 cores × mac_cols)."""
+    max_per_ppu = PPU_CORE_COUNT * mac_cols
+    chunks: list[tuple[int, int]] = []
+    n0 = 0
+    while n0 < n:
+        wave_n = min(max_per_ppu, n - n0)
+        chunks.append((n0, wave_n))
+        n0 += wave_n
+    return chunks
+
+
+def os_ppu_n_wave_count(n: int, *, mac_cols: int = CORE_MAC) -> int:
+    return len(os_ppu_n_wave_chunks(n, mac_cols=mac_cols))
+
+
+def ppus_needed_for_n(n: int, *, mac_cols: int = CORE_MAC) -> int:
+    """PPUs required to map N columns on Logic Die (one head / one GEMM)."""
+    n_slices = math.ceil(n / mac_cols)
+    return math.ceil(n_slices / PPU_CORE_COUNT)
+
+
+def one_head_per_ppu_layout(batch: int) -> tuple[int, int]:
+    """Return (heads_per_wave, batch_waves) — one Q head per PPU, all heads parallel."""
+    if batch > DIE_PPU_COUNT:
+        raise ValueError(
+            f"one head per PPU: batch={batch} exceeds {DIE_PPU_COUNT} PPUs"
+        )
+    return batch, 1
+
+
+def compute_os_single_ppu_plan(
+    m: int,
+    k: int,
+    n: int,
+    *,
+    ppu_index: int,
+    n0: int = 0,
+    wave_index: int = 0,
+    head_index: int = 0,
+    mac_cols: int = CORE_MAC,
+) -> LogicDiePlan:
+    """OS tile plan for one head on a single PPU (N split across its 16 cores only)."""
+    if m < 1 or m > OS_M_MAX:
+        raise ValueError(f"OS mode: M must be in [1, {OS_M_MAX}], got M={m}")
+    if ppu_index < 0 or ppu_index >= DIE_PPU_COUNT:
+        raise ValueError(f"ppu_index must be in [0, {DIE_PPU_COUNT}), got {ppu_index}")
+
+    n_slices = math.ceil(n / mac_cols)
+    if n_slices > PPU_CORE_COUNT:
+        raise ValueError(
+            f"OS single-PPU: N={n} needs {n_slices} cores but one PPU has {PPU_CORE_COUNT}"
+        )
+
+    ppu_row, ppu_col = _ppu_coords(ppu_index)
+    tiles: list[CoreTile] = []
+    for slice_idx in range(n_slices):
+        core_idx = slice_idx
+        core_row, core_col = divmod(core_idx, PPU_CORE_GRID)
+        slice_n0 = slice_idx * mac_cols
+
+        tiles.append(
+            CoreTile(
+                ppu_index=ppu_index,
+                ppu_row=ppu_row,
+                ppu_col=ppu_col,
+                core_row=core_row,
+                core_col=core_col,
+                m0=0,
+                k0=0,
+                n0=n0 + slice_n0,
+                local_m=m,
+                local_k=k,
+                local_n=min(mac_cols, n - slice_n0),
+                wave_index=wave_index,
+                head_index=head_index,
+            )
+        )
+
+    return LogicDiePlan(mac_cols=mac_cols, tiles=tiles)
+
+
+
 def compute_os_logic_die_plan(
     m: int,
     k: int,
@@ -141,6 +226,8 @@ def compute_os_logic_die_plan(
     *,
     n0: int = 0,
     wave_index: int = 0,
+    head_index: int = 0,
+    ppu_offset: int = 0,
     mac_cols: int = CORE_MAC,
 ) -> LogicDiePlan:
     """OS: M must fit in one core (1–16); split N across cores then PPUs.
@@ -155,16 +242,17 @@ def compute_os_logic_die_plan(
 
     n_slices = math.ceil(n / mac_cols)
     ppus_needed = math.ceil(n_slices / PPU_CORE_COUNT)
+    ppu_limit = DIE_PPU_COUNT - ppu_offset
 
-    if ppus_needed > DIE_PPU_COUNT:
+    if ppus_needed > ppu_limit:
         raise ValueError(
-            f"OS mode: N={n} requires {ppus_needed} PPUs "
-            f"(max {DIE_PPU_COUNT} on Logic Die)"
+            f"OS mode: N={n} requires {ppus_needed} PPUs from offset {ppu_offset} "
+            f"(max {ppu_limit} available)"
         )
 
     tiles: list[CoreTile] = []
     for slice_idx in range(n_slices):
-        ppu_index = slice_idx // PPU_CORE_COUNT
+        ppu_index = ppu_offset + slice_idx // PPU_CORE_COUNT
         core_idx = slice_idx % PPU_CORE_COUNT
         core_row, core_col = divmod(core_idx, PPU_CORE_GRID)
         ppu_row, ppu_col = _ppu_coords(ppu_index)
@@ -184,6 +272,7 @@ def compute_os_logic_die_plan(
                 local_k=k,
                 local_n=min(mac_cols, n - slice_n0),
                 wave_index=wave_index,
+                head_index=head_index,
             )
         )
 

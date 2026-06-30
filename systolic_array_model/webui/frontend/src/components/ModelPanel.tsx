@@ -1,4 +1,4 @@
-import type { DataflowType, GemmOpInfo, GemmSimStat, ModelCatalog, ModelInfo } from '../types'
+import type { BenchmarkInfo, DataflowType, GemmOpInfo, GemmSimStat, ModelCatalog, ModelInfo } from '../types'
 
 interface Props {
   catalog: ModelCatalog | null
@@ -23,6 +23,26 @@ function formatCycles(stat: GemmSimStat | undefined, simRunning: boolean): strin
   return '—'
 }
 
+function findBenchmark(catalog: ModelCatalog | null, modelId: string): BenchmarkInfo | null {
+  return catalog?.benchmarks?.find((b) => b.model_id === modelId) ?? null
+}
+
+function refCyclesForOp(op: GemmOpInfo, benchmark: BenchmarkInfo | null): number | undefined {
+  return op.ref_cycles ?? benchmark?.gemm_cycles[op.id]
+}
+
+function refLabelForOp(op: GemmOpInfo, benchmark: BenchmarkInfo | null): string | undefined {
+  return op.ref_label ?? benchmark?.label
+}
+
+function formatPerformancePercent(simCycles: number, refCycles: number): string {
+  if (refCycles <= 0 || simCycles <= 0) return ''
+  const pct = (refCycles / simCycles) * 100
+  if (pct >= 1000) return `${Math.round(pct)}%`
+  if (pct >= 100) return `${pct.toFixed(0)}%`
+  return `${pct.toFixed(1)}%`
+}
+
 export function ModelPanel({
   catalog,
   selectedModelId,
@@ -36,6 +56,7 @@ export function ModelPanel({
 }: Props) {
   const model = findModel(catalog, selectedModelId)
   const hw = catalog?.hardware
+  const benchmark = findBenchmark(catalog, selectedModelId)
   const isOS = dataflow === 'output_stationary'
   const panelLocked = initLoading || simRunning
 
@@ -71,6 +92,8 @@ export function ModelPanel({
             {model.gemm_ops.map((op) => {
               const stat = gemmStats[op.id]
               const ready = stat?.totalCycles != null && !stat?.error
+              const refCycles = refCyclesForOp(op, benchmark)
+              const refLabel = refLabelForOp(op, benchmark)
               return (
                 <GemmCard
                   key={op.id}
@@ -78,6 +101,9 @@ export function ModelPanel({
                   isOS={isOS}
                   selected={op.id === selectedGemmId}
                   cyclesLabel={formatCycles(stat, !!stat?.pending)}
+                  refCycles={refCycles}
+                  refLabel={refLabel}
+                  simCycles={stat?.totalCycles ?? null}
                   hasError={!!stat?.error}
                   disabled={!ready}
                   onSelect={() => onGemmSelect(op.id)}
@@ -112,6 +138,9 @@ function GemmCard({
   isOS,
   selected,
   cyclesLabel,
+  refCycles,
+  refLabel,
+  simCycles,
   hasError,
   disabled,
   onSelect,
@@ -120,10 +149,14 @@ function GemmCard({
   isOS: boolean
   selected: boolean
   cyclesLabel: string
+  refCycles?: number
+  refLabel?: string
+  simCycles: number | null
   hasError: boolean
   disabled: boolean
   onSelect: () => void
 }) {
+  const showRatio = simCycles != null && refCycles != null && refCycles > 0 && !hasError
   return (
     <div className={`gemm-card${selected ? ' selected' : ''}${hasError ? ' error' : ''}`}>
       <button
@@ -136,17 +169,34 @@ function GemmCard({
       </button>
       <div className="gemm-card-body mono">
         <div className="gemm-card-dims">
+          <span>B {(op.batch ?? 1).toLocaleString()}</span>
           <span>M {op.m.toLocaleString()}</span>
           <span>K {op.k.toLocaleString()}</span>
           <span>N {op.n.toLocaleString()}</span>
         </div>
         {isOS && op.wave_count > 1 && (
-          <div className="gemm-card-waves">{op.wave_count} waves</div>
+          <div className="gemm-card-waves">
+            {op.wave_count} waves
+            {(op.batch ?? 1) > 1 && (
+              <> · {op.heads_per_wave ?? op.batch} head × 1 PPU</>
+            )}
+          </div>
         )}
         <div className="gemm-card-cycles">
           <span className="gemm-detail-key">总 Cycle</span>
-          <span className={`gemm-detail-val${hasError ? '' : ' accent'}`}>{cyclesLabel}</span>
+          <span className={`gemm-detail-val${hasError ? '' : ' accent'}`}>
+            {cyclesLabel}
+            {showRatio && (
+              <span className="gemm-benchmark-pct"> ({formatPerformancePercent(simCycles, refCycles)})</span>
+            )}
+          </span>
         </div>
+        {refCycles != null && (
+          <div className="gemm-card-benchmark">
+            <span className="gemm-detail-key">{refLabel ?? '参考'}</span>
+            <span className="gemm-detail-val">{refCycles.toLocaleString()}</span>
+          </div>
+        )}
       </div>
     </div>
   )

@@ -168,10 +168,14 @@ export interface GemmOpInfo {
   m: number
   k: number
   n: number
+  batch: number
+  heads_per_wave?: number
   note: string
   ppus_needed: number
   wave_count: number
   fits_die: boolean
+  ref_cycles?: number
+  ref_label?: string
 }
 
 export interface ModelInfo {
@@ -236,6 +240,14 @@ export interface LogicDieLpddrSchedule {
   waves: LogicDieLpddrWaveSchedule[]
 }
 
+export interface BenchmarkInfo {
+  id: string
+  label: string
+  model_id: string
+  note?: string
+  gemm_cycles: Record<string, number>
+}
+
 export interface ModelCatalog {
   models: ModelInfo[]
   default_model_id: string
@@ -248,4 +260,5 @@ export interface ModelCatalog {
     os_n_wave_max: number
     memory: string
   }
+  benchmarks?: BenchmarkInfo[]
 }
