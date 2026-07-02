@@ -137,7 +137,7 @@ class Comm:
             f"(device={self.device_type}); use peak link bandwidth fallback"
         )
         transfer_bytes = collective_transfer_bytes(op, per_rank_bytes, self.tp_size)
-        return transfer_bytes / (1024**3) / peak_bw
+        return transfer_bytes / (1000**3) / peak_bw
 
     def all_reduce_latency_s(self, per_rank_bytes: int) -> float:
         return self.collective_latency_s("all_reduce", per_rank_bytes)

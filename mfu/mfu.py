@@ -10,7 +10,7 @@ def get_elementwise_memory_latency(tensor_array, device_type):
     gpu = gpu_map[device_type]
     # tensor: [bytes_per_element, [dim1, dim2, ...]]
     total_bytes = sum(math.prod(tensor[1]) * tensor[0] for tensor in tensor_array)
-    latency = total_bytes / (1024 * 1024 * 1024) / gpu.mem_bw
+    latency = total_bytes / (1000**3) / gpu.mem_bw
     return max(latency, gpu.min_latency_us / 1e6)
 
 
@@ -18,9 +18,9 @@ def get_gemm_mfu_and_latency(m, k, n, device_type, use_fp8_gemm):
     gpu = gpu_map[device_type]
     gflops = gemm_flops(m, k, n) / 1e9
     mfu = get_gemm_mfu(device_type, m, k, n)
-    latency = gflops / (gpu.fp16_tflops * 1024 * mfu)
+    latency = gflops / (gpu.fp16_tflops * 1000 * mfu)
     if use_fp8_gemm:
-        latency = gflops / (gpu.fp8_tflops * 1024 * mfu)
+        latency = gflops / (gpu.fp8_tflops * 1000 * mfu)
     # print(f"Debug: gemm m:{m} k:{k} n:{n} latency:{latency} mfu:{mfu}")
     return latency, mfu
 
@@ -29,9 +29,9 @@ def get_bmm_mfu_and_latency(b1, b2, m, k, n, device_type, use_fp8_gemm):
     gpu = gpu_map[device_type]
     gflops = bmm_flops(b1, b2, m, k, n) / 1e9
     mfu = get_bmm_mfu(device_type, b1, b2, m, k, n)
-    latency = gflops / (gpu.fp16_tflops * 1024 * mfu)
+    latency = gflops / (gpu.fp16_tflops * 1000 * mfu)
     if use_fp8_gemm:
-        latency = gflops / (gpu.fp8_tflops * 1024 * mfu)
+        latency = gflops / (gpu.fp8_tflops * 1000 * mfu)
     return latency, mfu
 
 
@@ -41,7 +41,7 @@ def get_gemm_memory_latency(m, k, n, device_type, use_fp8_gemm):
     m_a = m * k * bytes_per_element
     m_b = k * n * bytes_per_element
     m_c = m * n * bytes_per_element
-    latency = (m_a + m_b + m_c) / (1024 * 1024 * 1024) / gpu.mem_bw
+    latency = (m_a + m_b + m_c) / (1000**3) / gpu.mem_bw
     return max(latency, gpu.min_latency_us / 1e6)
 
 
@@ -51,7 +51,7 @@ def get_bmm_memory_latency(b1, b2, m, k, n, device_type, use_fp8_gemm):
     m_a = b1 * b2 * m * k * bytes_per_element
     m_b = b1 * b2 * k * n * bytes_per_element
     m_c = b1 * b2 * m * n * bytes_per_element
-    latency = (m_a + m_b + m_c) / (1024 * 1024 * 1024) / gpu.mem_bw
+    latency = (m_a + m_b + m_c) / (1000**3) / gpu.mem_bw
     return max(latency, gpu.min_latency_us / 1e6)
 
 

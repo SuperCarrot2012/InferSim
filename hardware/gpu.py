@@ -76,4 +76,18 @@ a100 = GPU(
     min_latency_us=4,
 )
 
-gpu_map = {"H20": h20, "H800": h800, "H200": h200, "GB200": gb200, "A100": a100}
+new_arch = GPU(
+    fp16_tflops=589.8,
+    fp8_tflops=589.8,
+    mfu=0.6,
+    mem=99.84,
+    mem_bw=39936 * 0.6,
+    nvlink_bw=600 / 2,
+    rdma_bw=50,
+    frequency=1500 * 0.9,
+    num_sm=48,
+    sm_version=80,
+    min_latency_us=0,
+)
+
+gpu_map = {"H20": h20, "H800": h800, "H200": h200, "GB200": gb200, "A100": a100, "NewArch": new_arch}
